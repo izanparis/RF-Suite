@@ -1,6 +1,6 @@
 # RF & Signal Integrity Suite
 
-Una plataforma integral diseñada para ingenieros de Radiofrecuencia (RF) e Integridad de Señal (SI). Proporciona una interfaz web moderna para el análisis de parámetros S, extracción de modelos RLC, gestión de hardware NanoVNA y más.
+Una plataforma integral diseñada para ingenieros de Telecomunicaciones. Proporciona una interfaz web moderna para el análisis de parámetros S, extracción de modelos RLC, gestión de hardware NanoVNA y más.
 
 ## 🚀 Características Principales
 
