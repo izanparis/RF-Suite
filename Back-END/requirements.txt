@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+pandas
+numpy
+matplotlib
+scipy
+scikit-rf
+pynanovna
+pyserial
