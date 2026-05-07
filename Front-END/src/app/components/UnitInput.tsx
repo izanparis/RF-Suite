@@ -13,6 +13,7 @@ type Props = {
   onChangeUnit: (u: string) => void;
   placeholder?: string;
   hint?: string;
+  disabled?: boolean;
 };
 
 export function UnitInput({
@@ -24,6 +25,7 @@ export function UnitInput({
   onChangeUnit,
   placeholder,
   hint,
+  disabled
 }: Props) {
   return (
     <div className="space-y-2">
@@ -38,8 +40,9 @@ export function UnitInput({
           onChange={(e) => onChangeValue(e.target.value)}
           placeholder={placeholder}
           inputMode="decimal"
+          disabled={disabled}
         />
-        <Select value={unit} onValueChange={onChangeUnit}>
+        <Select value={unit} onValueChange={onChangeUnit} disabled={disabled}>
           <SelectTrigger className="col-span-5">
             <SelectValue placeholder="Unidad" />
           </SelectTrigger>

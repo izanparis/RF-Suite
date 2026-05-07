@@ -4,16 +4,24 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui
 import { Label } from '../ui/label';
 import { Input } from '../ui/input';
 import { Button } from '../ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { OutputPickerPro } from '../OutputPickerPro';
 import { cn } from '../ui/utils';
-import { Upload, FileCheck, ChevronLeft, ChevronRight, Download, Activity, BarChart3, LineChart as ChartIcon, X, Trash2, GripHorizontal } from 'lucide-react';
+import { Upload, FileCheck, ChevronLeft, ChevronRight, Download, Activity, BarChart3, LineChart as ChartIcon, X, Trash2, GripHorizontal, Library, RefreshCw } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   Legend, ResponsiveContainer, Brush, ReferenceLine, ReferenceDot 
 } from 'recharts';
 import type { DirectoryHandle } from '../../lib/fsAccess';
+import { useLanguage } from '../../lib/i18n';
 
-export function SParamAnalysisTool() {
+interface SParamAnalysisToolProps {
+  initialFile?: { name: string, device?: string } | null;
+  onFileProcessed?: () => void;
+}
+
+export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnalysisToolProps) {
+  const { t } = useLanguage();
   const [s2pFile, setS2pFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -25,11 +33,74 @@ export function SParamAnalysisTool() {
   const [result, setResult] = useState<any>(null);
   const [activePlotIdx, setActivePlotIdx] = useState(0);
   const [markers, setMarkers] = useState<any[]>([]);
+
+  // Biblioteca de mediciones del servidor
+  const [measurements, setMeasurements] = useState<{name: string, size: number, mtime: number}[]>([]);
+  const [selectedMeasName, setSelectedMeasName] = useState<string>("");
+  const [device, setDevice] = useState('NanoVNA-Izan');
   
   // Dragging state for the markers panel
   const [panelPos, setPanelPos] = useState({ x: 24, y: 64 }); // Initial relative to top-right
   const [isDraggingPanel, setIsDraggingPanel] = useState(false);
   const dragStartPos = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    fetchMeasurements();
+  }, [device]);
+
+  // Manejar archivo inicial proveniente de la biblioteca
+  useEffect(() => {
+    if (initialFile) {
+      if (initialFile.device) {
+        setDevice(initialFile.device);
+      }
+      handleMeasSelect(initialFile.name, initialFile.device);
+      
+      if (onFileProcessed) {
+        onFileProcessed();
+      }
+    }
+  }, [initialFile]);
+
+  const fetchMeasurements = async () => {
+    try {
+      const response = await fetch(`http://localhost:8080/api/vna/measurements?device=${encodeURIComponent(device)}`);
+      if (response.ok) {
+        const data = await response.json();
+        setMeasurements(data);
+      }
+    } catch (err) {
+      console.error("Error fetching measurements:", err);
+    }
+  };
+
+  const handleMeasSelect = async (val: string, customDevice?: string) => {
+    setSelectedMeasName(val);
+    if (!val) return;
+
+    setLoading(true);
+    setResult(null);
+    setActivePlotIdx(0);
+    setMarkers([]);
+    setS2pFile(null); // Quitar archivo local si se elige biblioteca
+
+    const targetDevice = customDevice || device;
+
+    try {
+      const response = await fetch(`http://localhost:8080/api/vna/measurements/analyze/${encodeURIComponent(val)}?device=${encodeURIComponent(targetDevice)}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Error al analizar la medición del servidor');
+      }
+      const data = await response.json();
+      setResult(data);
+    } catch (error) {
+      console.error(error);
+      alert('Error: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const onMouseDown = (e: React.MouseEvent) => {
     setIsDraggingPanel(true);
@@ -62,14 +133,22 @@ export function SParamAnalysisTool() {
   // Transform backend data for Recharts
   const chartData = useMemo(() => {
     if (!result?.data) return [];
-    return result.data.freq_hz.map((f: number, i: number) => ({
-      freqMHz: (f / 1e6).toFixed(2),
-      s11: result.data.s11_db[i],
-      s21: result.data.s21_db[i],
-      phase11: result.data.s11_phase[i],
-      phase21: result.data.s21_phase[i],
-      vswr: result.data.vswr[i],
-    }));
+    const hasS21 = result.data.n_ports >= 2;
+    return result.data.freq_hz.map((f: number, i: number) => {
+      const entry: any = {
+        freqMHz: (f / 1e6).toFixed(2),
+        s11: result.data.s11_db[i],
+        phase11: result.data.s11_phase[i],
+        vswr: result.data.vswr[i],
+        zMag: result.data.z_mag ? result.data.z_mag[i] : null,
+        zMagShunt: result.data.z_mag_shunt ? result.data.z_mag_shunt[i] : null,
+      };
+      if (hasS21 && result.data.s21_db) {
+        entry.s21 = result.data.s21_db[i];
+        entry.phase21 = result.data.s21_phase[i];
+      }
+      return entry;
+    });
   }, [result]);
 
   const handleChartClick = (state: any) => {
@@ -100,17 +179,18 @@ export function SParamAnalysisTool() {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files?.[0];
-    if (file && (file.name.toLowerCase().endsWith('.s2p') || file.name.toLowerCase().endsWith('.ts'))) {
+    if (file && (file.name.toLowerCase().endsWith('.s2p') || file.name.toLowerCase().endsWith('.s1p') || file.name.toLowerCase().endsWith('.ts'))) {
       setS2pFile(file);
+      setSelectedMeasName("");
     } else {
-      alert('Por favor, sube un archivo Touchstone (.s2p)');
+      alert(t('sparam.alert.file_type'));
     }
   };
 
   const handleAction = async (id: string) => {
     if (id === 'analyze') {
       if (!s2pFile) {
-        alert('Por favor, selecciona un archivo .s2p primero.');
+        alert(t('sparam.alert.no_file'));
         return;
       }
 
@@ -136,16 +216,15 @@ export function SParamAnalysisTool() {
         setResult(data);
       } catch (error) {
         console.error(error);
-        alert('Error al analizar archivo: ' + (error instanceof Error ? error.message : String(error)));
+        alert(t('sparam.alert.error_analyze') + (error instanceof Error ? error.message : String(error)));
       } finally {
         setLoading(false);
       }
     }
 
     if (id === 'report') {
-      console.log('Attempting export. Result object keys:', result ? Object.keys(result) : 'null');
       if (!result || !result.zip_content) {
-        alert('Error: No se han encontrado datos para exportar. Por favor, pulsa el botón "Analizar" de nuevo para generar el paquete ZIP.');
+        alert(t('sparam.alert.no_data'));
         return;
       }
       try {
@@ -156,9 +235,9 @@ export function SParamAnalysisTool() {
         }
 
         await saveBase64File(outDir, filename, result.zip_content);
-        alert('✅ Paquete ZIP exportado correctamente.');
+        alert(t('sparam.alert.export_success'));
       } catch (e) {
-        alert('❌ Error al exportar ZIP: ' + e);
+        alert(t('sparam.alert.export_error') + e);
       }
     }
   };
@@ -174,9 +253,9 @@ export function SParamAnalysisTool() {
   const renderActiveChart = () => {
     if (!result) return null;
     const currentPlot = result.plots[activePlotIdx];
+    const hasS21 = result.data.n_ports >= 2;
 
-    // Cartesian dynamic charts for Mag, Phase, VSWR
-    if (['mag', 'phase', 'vswr'].includes(currentPlot.id)) {
+    if (['mag', 'phase', 'vswr', 'zmag'].includes(currentPlot.id)) {
       return (
         <div className="w-full h-[500px] bg-white dark:bg-zinc-950/50 rounded-xl p-4 border border-border shadow-inner animate-in fade-in zoom-in duration-300 relative group/chart">
           <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 text-center">
@@ -195,7 +274,7 @@ export function SParamAnalysisTool() {
                 tick={{fontSize: 11, fill: '#666', fontWeight: 500}}
                 minTickGap={60}
                 label={{
-                  value: 'FRECUENCIA (MHz)', 
+                  value: t('sparam.chart.freq'), 
                   position: 'insideBottom', 
                   offset: -15, 
                   fontSize: 13, 
@@ -205,9 +284,16 @@ export function SParamAnalysisTool() {
               />
               <YAxis 
                 tick={{fontSize: 11, fill: '#666', fontWeight: 500}}
-                domain={['auto', 'auto']}
+                domain={currentPlot.id === 'zmag' ? [0.1, 'auto'] : ['auto', 'auto']}
+                scale={currentPlot.id === 'zmag' ? 'log' : 'auto'}
+                tickFormatter={(val) => {
+                  if (currentPlot.id !== 'zmag') return val;
+                  if (val >= 1000) return `${(val/1000).toFixed(1)}k`;
+                  if (val < 1 && val > 0) return val.toFixed(1);
+                  return Math.round(val).toString();
+                }}
                 label={{
-                  value: currentPlot.title.toUpperCase(), 
+                  value: currentPlot.id === 'zmag' ? 'IMPEDANCIA (Ω)' : currentPlot.title.toUpperCase(), 
                   angle: -90, 
                   position: 'insideLeft', 
                   offset: -5,
@@ -248,25 +334,25 @@ export function SParamAnalysisTool() {
               {currentPlot.id === 'mag' && (
                 <>
                   <Line type="monotone" dataKey="s11" name="S11" stroke="#3b82f6" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
-                  <Line type="monotone" dataKey="s21" name="S21" stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
+                  {hasS21 && <Line type="monotone" dataKey="s21" name="S21" stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />}
                   {markers.map((m, i) => (
                     <React.Fragment key={i}>
                       <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
                       <ReferenceDot x={m.freqMHz} y={m.s11} r={4} fill="#3b82f6" stroke="white" />
-                      <ReferenceDot x={m.freqMHz} y={m.s21} r={4} fill="#ef4444" stroke="white" />
+                      {hasS21 && <ReferenceDot x={m.freqMHz} y={m.s21} r={4} fill="#ef4444" stroke="white" />}
                     </React.Fragment>
                   ))}
                 </>
               )}
               {currentPlot.id === 'phase' && (
                 <>
-                  <Line type="monotone" dataKey="phase11" name="Fase S11" stroke="#3b82f6" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
-                  <Line type="monotone" dataKey="phase21" name="Fase S21" stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
+                  <Line type="monotone" dataKey="phase11" name={t('sparam.chart.phase_s11')} stroke="#3b82f6" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
+                  {hasS21 && <Line type="monotone" dataKey="phase21" name={t('sparam.chart.phase_s21')} stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />}
                   {markers.map((m, i) => (
                     <React.Fragment key={i}>
                       <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
                       <ReferenceDot x={m.freqMHz} y={m.phase11} r={4} fill="#3b82f6" stroke="white" />
-                      <ReferenceDot x={m.freqMHz} y={m.phase21} r={4} fill="#ef4444" stroke="white" />
+                      {hasS21 && <ReferenceDot x={m.freqMHz} y={m.phase21} r={4} fill="#ef4444" stroke="white" />}
                     </React.Fragment>
                   ))}
                 </>
@@ -282,6 +368,19 @@ export function SParamAnalysisTool() {
                   ))}
                 </>
               )}
+              {currentPlot.id === 'zmag' && (
+                <>
+                  <Line type="monotone" dataKey="zMag" name={result.data.n_ports === 1 ? "|Z_in|" : "|Z_serie|"} stroke="#a855f7" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
+                  {result.data.n_ports > 1 && <Line type="monotone" dataKey="zMagShunt" name="|Z_paralelo|" stroke="#92400e" strokeWidth={2} strokeDasharray="5 5" dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />}
+                  {markers.map((m, i) => (
+                    <React.Fragment key={i}>
+                      <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
+                      <ReferenceDot x={m.freqMHz} y={m.zMag} r={4} fill="#a855f7" stroke="white" />
+                      {result.data.n_ports > 1 && <ReferenceDot x={m.freqMHz} y={m.zMagShunt} r={4} fill="#92400e" stroke="white" />}
+                    </React.Fragment>
+                  ))}
+                </>
+              )}
             </LineChart>
           </ResponsiveContainer>
 
@@ -291,7 +390,6 @@ export function SParamAnalysisTool() {
               className="absolute z-20 space-y-2 w-[160px]"
             >
               <div className="bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md border border-border rounded-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-                {/* Drag Handle */}
                 <div 
                   onMouseDown={onMouseDown}
                   className="flex items-center justify-between bg-muted/50 px-2 py-1.5 cursor-grab active:cursor-grabbing border-b border-border/50 group"
@@ -309,7 +407,6 @@ export function SParamAnalysisTool() {
                   </button>
                 </div>
 
-                {/* Markers List */}
                 <div className="p-1.5 space-y-1.5 max-h-[250px] overflow-y-auto pr-1 custom-scrollbar">
                   {markers.map((m, i) => (
                     <div 
@@ -338,10 +435,12 @@ export function SParamAnalysisTool() {
                               <span className="text-blue-500">S11:</span>
                               <span className="font-mono font-bold">{m.s11.toFixed(2)}</span>
                             </div>
-                            <div className="flex justify-between">
-                              <span className="text-red-500">S21:</span>
-                              <span className="font-mono font-bold">{m.s21.toFixed(2)}</span>
-                            </div>
+                            {hasS21 && (
+                              <div className="flex justify-between">
+                                <span className="text-red-500">S21:</span>
+                                <span className="font-mono font-bold">{m.s21.toFixed(2)}</span>
+                              </div>
+                            )}
                           </>
                         )}
                         
@@ -351,10 +450,12 @@ export function SParamAnalysisTool() {
                               <span className="text-blue-500">P11:</span>
                               <span className="font-mono font-bold">{m.phase11.toFixed(1)}°</span>
                             </div>
-                            <div className="flex justify-between">
-                              <span className="text-red-500">P21:</span>
-                              <span className="font-mono font-bold">{m.phase21.toFixed(1)}°</span>
-                            </div>
+                            {hasS21 && (
+                              <div className="flex justify-between">
+                                <span className="text-red-500">P21:</span>
+                                <span className="font-mono font-bold">{m.phase21.toFixed(1)}°</span>
+                              </div>
+                            )}
                           </>
                         )}
                         
@@ -363,6 +464,21 @@ export function SParamAnalysisTool() {
                             <span className="text-emerald-500">VSWR:</span>
                             <span className="font-mono font-bold">{m.vswr.toFixed(2)}</span>
                           </div>
+                        )}
+                        
+                        {currentPlot.id === 'zmag' && (
+                          <>
+                            <div className="flex justify-between">
+                              <span className="text-purple-500">{result.data.n_ports === 1 ? '|Z_in|:' : '|Z_ser|:'}</span>
+                              <span className="font-mono font-bold">{m.zMag ? m.zMag.toFixed(2) : '-'} Ω</span>
+                            </div>
+                            {result.data.n_ports > 1 && (
+                              <div className="flex justify-between">
+                                <span className="text-amber-700">|Z_par|:</span>
+                                <span className="font-mono font-bold">{m.zMagShunt ? m.zMagShunt.toFixed(2) : '-'} Ω</span>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -375,7 +491,6 @@ export function SParamAnalysisTool() {
       );
     }
 
-    // Static high-quality images for Smith Charts
     return (
       <div className="relative w-full max-w-2xl bg-white dark:bg-zinc-900 rounded-xl shadow-xl border border-border p-4 overflow-hidden group animate-in fade-in zoom-in duration-300">
         <img 
@@ -395,21 +510,71 @@ export function SParamAnalysisTool() {
 
   return (
     <ToolShell
-      title="Análisis de parámetros S (S2P)"
-      description="Carga un archivo Touchstone (.s2p) y analiza magnitud/fase, VSWR y cartas de Smith."
+      title={t('sparam.title')}
+      description={t('sparam.desc')}
       actions={[
-        { id: 'analyze', label: 'Analizar', variant: 'default' },
-        { id: 'report', label: 'Exportar todo (.zip)', variant: 'outline' },
+        { id: 'analyze', label: t('sparam.action.analyze'), variant: 'default' },
+        { id: 'report', label: t('sparam.action.report'), variant: 'outline' },
       ]}
       onAction={handleAction}
     >
       <div className="space-y-6 text-zinc-900">
-        {/* Top Grid: Input and Output only */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <Card className="flex flex-col">
             <CardHeader className="pb-3 text-zinc-900">
-              <CardTitle className="text-lg">Entrada</CardTitle>
-              <CardDescription>Archivo Touchstone (.s2p)</CardDescription>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Library className="w-5 h-5 text-primary" />
+                  Biblioteca
+                </CardTitle>
+                <button onClick={fetchMeasurements} className="text-muted-foreground hover:text-primary p-1">
+                  <RefreshCw className="w-3 h-3" />
+                </button>
+              </div>
+              <CardDescription>Mediciones guardadas en el servidor.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 space-y-4">
+               <div className="space-y-2">
+                 <Label className="text-[10px] uppercase font-bold text-muted-foreground">VNA / Carpeta</Label>
+                 <Select value={device} onValueChange={setDevice}>
+                    <SelectTrigger className="bg-input-background h-8 text-xs">
+                      <SelectValue placeholder="Seleccionar dispositivo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="NanoVNA-Izan">NanoVNA-Izan</SelectItem>
+                      <SelectItem value="NanoVNA-LAB1">NanoVNA-LAB1</SelectItem>
+                      <SelectItem value="NanoVNA-LAB2">NanoVNA-LAB2</SelectItem>
+                    </SelectContent>
+                  </Select>
+               </div>
+               
+               <div className="space-y-2">
+                 <Label className="text-[10px] uppercase font-bold text-muted-foreground">Medición</Label>
+                 <Select value={selectedMeasName} onValueChange={handleMeasSelect}>
+                    <SelectTrigger className="bg-input-background">
+                      <SelectValue placeholder="Selecciona..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {measurements.map((m) => (
+                        <SelectItem key={m.name} value={m.name}>
+                          {m.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {selectedMeasName && (
+                  <div className="text-[10px] text-muted-foreground italic px-1">
+                    Cargada: {selectedMeasName}
+                  </div>
+                )}
+            </CardContent>
+          </Card>
+
+          <Card className="flex flex-col">
+            <CardHeader className="pb-3 text-zinc-900">
+              <CardTitle className="text-lg">{t('sparam.input.title')}</CardTitle>
+              <CardDescription>{t('sparam.input.desc')}</CardDescription>
             </CardHeader>
             <CardContent className="flex-1">
               <div
@@ -418,7 +583,7 @@ export function SParamAnalysisTool() {
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
                 className={cn(
-                  "relative group cursor-pointer border-2 border-dashed rounded-xl p-6 h-full min-h-[140px] transition-all flex flex-col items-center justify-center gap-2",
+                  "relative group cursor-pointer border-2 border-dashed rounded-xl p-4 h-full min-h-[100px] transition-all flex flex-col items-center justify-center gap-2",
                   isDragging 
                     ? "border-primary bg-primary/5 scale-[1.01]" 
                     : "border-border hover:border-primary/50 hover:bg-muted/50"
@@ -428,20 +593,25 @@ export function SParamAnalysisTool() {
                   type="file"
                   ref={fileInputRef}
                   className="hidden"
-                  accept=".s2p"
-                  onChange={(e) => setS2pFile(e.target.files?.[0] ?? null)}
+                  accept=".s2p,.s1p,.ts"
+                  onChange={(e) => {
+                    if (e.target.files?.[0]) {
+                      setS2pFile(e.target.files[0]);
+                      setSelectedMeasName("");
+                    }
+                  }}
                 />
                 
                 <div className={cn(
-                  "w-10 h-10 rounded-full flex items-center justify-center transition-colors",
+                  "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
                   s2pFile ? "bg-green-100 text-green-600" : "bg-primary/10 text-primary group-hover:bg-primary/20"
                 )}>
-                  {s2pFile ? <FileCheck className="w-5 h-5" /> : <Upload className="w-5 h-5" />}
+                  {s2pFile ? <FileCheck className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
                 </div>
 
                 <div className="text-center">
-                  <p className="text-xs font-medium max-w-[150px] truncate">
-                    {s2pFile ? s2pFile.name : "Haz clic o arrastra aquí"}
+                  <p className="text-[10px] font-medium max-w-[120px] truncate">
+                    {s2pFile ? s2pFile.name : t('sparam.drag.text')}
                   </p>
                 </div>
 
@@ -453,7 +623,7 @@ export function SParamAnalysisTool() {
                     }}
                     className="absolute top-1 right-1 text-[10px] text-muted-foreground hover:text-destructive p-1"
                   >
-                    Quitar
+                    {t('sparam.drag.remove')}
                   </button>
                 )}
               </div>
@@ -462,12 +632,12 @@ export function SParamAnalysisTool() {
 
           <Card className="flex flex-col">
             <CardHeader className="pb-3 text-zinc-900">
-              <CardTitle className="text-lg">Salida</CardTitle>
-              <CardDescription>Configuración del reporte</CardDescription>
+              <CardTitle className="text-lg">{t('sparam.output.title')}</CardTitle>
+              <CardDescription>{t('sparam.output.desc')}</CardDescription>
             </CardHeader>
             <CardContent className="flex-1">
               <OutputPickerPro
-                label="Nombre del reporte"
+                label={t('sparam.output.label')}
                 defaultName={outName}
                 onChange={({ filename, dirHandle }) => {
                   setOutName(filename);
@@ -478,52 +648,52 @@ export function SParamAnalysisTool() {
           </Card>
         </div>
 
-        {/* Middle Section: Summary (Full width) */}
         <Card className={cn("transition-colors", result ? "bg-primary/5 border-primary/20" : "bg-muted/30")}>
           <CardHeader className="pb-2 text-zinc-900">
             <CardTitle className="text-sm uppercase tracking-wider text-muted-foreground font-bold flex items-center gap-2">
               <BarChart3 className="w-4 h-4" />
-              Resumen de Métricas
+              {t('sparam.summary.title')}
             </CardTitle>
           </CardHeader>
           <CardContent>
             {result ? (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="flex flex-col border-l-2 border-primary/20 pl-4">
-                  <p className="text-[10px] text-muted-foreground uppercase font-bold text-zinc-900">Min S11 (Return Loss)</p>
+                  <p className="text-[10px] text-muted-foreground uppercase font-bold text-zinc-900">{t('sparam.summary.min_s11')}</p>
                   <p className="text-2xl font-mono font-bold text-primary">{result.summary.min_s11.toFixed(2)} dB</p>
                 </div>
+                {result.data.n_ports >= 2 && result.summary.max_s21 !== null && (
+                  <div className="flex flex-col border-l-2 border-primary/20 pl-4">
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold text-zinc-900">{t('sparam.summary.max_s21')}</p>
+                    <p className="text-2xl font-mono font-bold text-primary">{result.summary.max_s21.toFixed(2)} dB</p>
+                  </div>
+                )}
                 <div className="flex flex-col border-l-2 border-primary/20 pl-4">
-                  <p className="text-[10px] text-muted-foreground uppercase font-bold text-zinc-900">Max S21 (Insertion Loss)</p>
-                  <p className="text-2xl font-mono font-bold text-primary">{result.summary.max_s21.toFixed(2)} dB</p>
-                </div>
-                <div className="flex flex-col border-l-2 border-primary/20 pl-4">
-                  <p className="text-[10px] text-muted-foreground uppercase font-bold text-zinc-900">Min VSWR</p>
+                  <p className="text-[10px] text-muted-foreground uppercase font-bold text-zinc-900">{t('sparam.summary.min_vswr')}</p>
                   <p className="text-2xl font-mono font-bold text-primary">{result.summary.min_vswr.toFixed(2)}</p>
                 </div>
               </div>
             ) : (
               <div className="text-center py-2">
-                <p className="text-xs text-muted-foreground italic">Analiza un archivo para ver los indicadores clave de rendimiento (KPIs)</p>
+                <p className="text-xs text-muted-foreground italic">{t('sparam.summary.placeholder')}</p>
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Bottom Section: Plot Carousel */}
         <Card className="w-full flex flex-col overflow-hidden min-h-[500px]">
           <CardHeader className="flex flex-row items-center justify-between border-b border-border/50 bg-muted/10 px-6 py-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-zinc-900">
-                <CardTitle className="text-xl">Visualización de Gráficas</CardTitle>
+                <CardTitle className="text-xl">{t('sparam.plots.title')}</CardTitle>
                 {result && ['mag', 'phase', 'vswr'].includes(result.plots[activePlotIdx].id) && (
                   <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tight flex items-center gap-1">
-                    <ChartIcon className="w-3 h-3" /> Dinámico
+                    <ChartIcon className="w-3 h-3" /> {t('sparam.plots.dynamic')}
                   </span>
                 )}
               </div>
               <CardDescription>
-                {result ? `Gráfico: ${result.plots[activePlotIdx].title}` : 'Los resultados aparecerán aquí tras el análisis.'}
+                {result ? t('sparam.plots.desc_result', result.plots[activePlotIdx].title) : t('sparam.plots.desc_idle')}
               </CardDescription>
             </div>
             {result && (
@@ -535,7 +705,7 @@ export function SParamAnalysisTool() {
                   className="h-9 gap-2 px-4 shadow-sm"
                 >
                   <Download className="w-4 h-4 text-primary" />
-                  <span className="font-semibold text-xs text-zinc-900">Exportar PNG</span>
+                  <span className="font-semibold text-xs text-zinc-900">{t('sparam.plots.export_png')}</span>
                 </Button>
                 <div className="flex items-center bg-background rounded-lg p-1 border border-border shadow-sm">
                   <Button 
@@ -548,7 +718,7 @@ export function SParamAnalysisTool() {
                     <ChevronLeft className="w-5 h-5 text-zinc-900" />
                   </Button>
                   <div className="px-3 flex flex-col items-center justify-center min-w-[60px] border-x border-border/50 mx-1">
-                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-tight text-zinc-900">Vista</span>
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-tight text-zinc-900">{t('sparam.plots.view')}</span>
                     <span className="text-sm font-mono font-bold leading-tight text-zinc-900">
                       {activePlotIdx + 1} / {result.plots.length}
                     </span>
@@ -574,8 +744,8 @@ export function SParamAnalysisTool() {
                   <Activity className="absolute inset-0 m-auto w-6 h-6 text-primary/50" />
                 </div>
                 <div className="text-center space-y-2">
-                  <p className="font-bold text-lg">Procesando datos RF...</p>
-                  <p className="text-muted-foreground animate-pulse text-sm">Calculando VSWR y Diagramas de Smith en el motor Python</p>
+                  <p className="font-bold text-lg">{t('sparam.loading.title')}</p>
+                  <p className="text-muted-foreground animate-pulse text-sm">{t('sparam.loading.desc')}</p>
                 </div>
               </div>
             ) : result ? (
@@ -583,7 +753,10 @@ export function SParamAnalysisTool() {
                 
                 {renderActiveChart()}
 
-                <div className="mt-8 grid grid-cols-5 gap-2 w-full max-w-lg">
+                <div 
+                  className="mt-8 grid gap-2 w-full max-w-lg"
+                  style={{ gridTemplateColumns: `repeat(${result.plots.length}, minmax(0, 1fr))` }}
+                >
                   {result.plots.map((p: any, i: number) => (
                     <button
                       key={p.id}
@@ -603,9 +776,9 @@ export function SParamAnalysisTool() {
                   <Activity className="w-12 h-12" />
                 </div>
                 <div className="max-w-md mx-auto space-y-2">
-                  <h3 className="text-xl font-bold text-foreground/80 text-zinc-900">Analizador de Datos RF</h3>
+                  <h3 className="text-xl font-bold text-foreground/80 text-zinc-900">{t('sparam.empty.title')}</h3>
                   <p className="text-sm text-muted-foreground">
-                    Sube un archivo <code className="bg-muted px-1.5 py-0.5 rounded font-mono text-primary text-zinc-900">.s2p</code> en el panel superior para generar los diagramas de Smith, VSWR y magnitud.
+                    {t('sparam.empty.desc')}
                   </p>
                 </div>
               </div>

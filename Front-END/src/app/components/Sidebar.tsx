@@ -1,18 +1,14 @@
 import React from 'react';
 import {
   Radio,
-  SlidersHorizontal,
-  Activity,
-  FileDown,
-  Table,
-  Wand2,
-  CircuitBoard,
   LayoutDashboard,
   Info
 } from 'lucide-react';
 
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { useLanguage } from '../lib/i18n';
+import { useTools } from '../hooks/useTools';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -25,40 +21,10 @@ interface SidebarProps {
   setIsOpen: (open: boolean) => void;
 }
 
-export const tools = [
-  {
-    id: 'calibration',
-    name: 'Calibración',
-    description: 'Calibración SOLT.',
-    icon: SlidersHorizontal,
-  },
-  {
-    id: 'measurement',
-    name: 'Extracción de S-Params ',
-    description: 'Carga la calibración, mide y exporta los datos del VNA.',
-    icon: Activity,
-  },
-  {
-    id: 'csv-analysis',
-    name: 'Análisis Parámetros-S (S2P)',
-    description: 'Analiza magnitud/fase desde un archivo Touchstone.',
-    icon: Table,
-  },
-  {
-    id: 'samm',
-    name: 'Selección Automática del Modelo de Medición (SAMM)',
-    description: 'Selección Automática del Modelo de Medición',
-    icon: Wand2,
-  },
-  {
-    id: 'rlc-model',
-    name: 'Modelo RLC',
-    description: 'Ajuste automático del equivalente RLC.',
-    icon: CircuitBoard,
-  },
-];
-
 export function Sidebar({ currentTool, onSelectTool, isOpen, setIsOpen }: SidebarProps) {
+  const { t } = useLanguage();
+  const { mainTools, labTools } = useTools();
+
   return (
     <>
       {/* Mobile Overlay */}
@@ -83,7 +49,7 @@ export function Sidebar({ currentTool, onSelectTool, isOpen, setIsOpen }: Sideba
           className="h-16 flex items-center px-6 border-b border-border w-full hover:bg-muted/50 transition-colors text-left"
         >
           <Radio className="w-6 h-6 text-primary mr-2" />
-          <h1 className="text-xl font-bold tracking-tight">RF Suite</h1>
+          <h1 className="text-xl font-bold tracking-tight">{t('app.title')}</h1>
         </button>
 
         <div className="p-4 space-y-1">
@@ -100,13 +66,41 @@ export function Sidebar({ currentTool, onSelectTool, isOpen, setIsOpen }: Sideba
             )}
           >
             <LayoutDashboard className={cn("w-5 h-5", currentTool === 'dashboard' ? "text-primary" : "text-muted-foreground")} />
-            Dashboard
+            {t('dashboard')}
           </button>
 
-          <div className="text-xs font-semibold text-muted-foreground mb-4 px-2 uppercase tracking-wider">
-            Tools
+          {/* Sección Ingeniería RF */}
+          <div className="text-xs font-semibold text-muted-foreground mb-2 px-2 uppercase tracking-wider mt-4">
+            {t('rf_engineering')}
           </div>
-          {tools.map((tool) => {
+          {mainTools.map((tool) => {
+            const Icon = tool.icon;
+            const isActive = currentTool === tool.id;
+            return (
+              <button
+                key={tool.id}
+                onClick={() => {
+                  onSelectTool(tool.id);
+                  setIsOpen(false);
+                }}
+                className={cn(
+                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors",
+                  isActive 
+                    ? "bg-primary/10 text-primary" 
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+              >
+                <Icon className={cn("w-5 h-5", isActive ? "text-primary" : "text-muted-foreground")} />
+                {tool.name}
+              </button>
+            );
+          })}
+
+          {/* Sección Laboratorio */}
+          <div className="text-xs font-semibold text-muted-foreground mb-2 px-2 uppercase tracking-wider mt-6 pt-4 border-t border-border/50">
+            {t('laboratory')}
+          </div>
+          {labTools.map((tool) => {
             const Icon = tool.icon;
             const isActive = currentTool === tool.id;
             return (
@@ -143,7 +137,7 @@ export function Sidebar({ currentTool, onSelectTool, isOpen, setIsOpen }: Sideba
               )}
             >
               <Info className={cn("w-5 h-5", currentTool === 'sobre' ? "text-primary" : "text-muted-foreground")} />
-              Sobre
+              {t('about')}
             </button>
           </div>
         </div>

@@ -13,17 +13,45 @@ export async function pickDirectory(): Promise<DirectoryHandle> {
   return await window.showDirectoryPicker();
 }
 
+async function verifyPermission(handle: any, readWrite: boolean) {
+  const options: any = {};
+  if (readWrite) {
+    options.mode = 'readwrite';
+  }
+  // Check if permission was already granted. If so, return true.
+  if ((await handle.queryPermission(options)) === 'granted') {
+    return true;
+  }
+  // Request permission. If the user grants permission, return true.
+  if ((await handle.requestPermission(options)) === 'granted') {
+    return true;
+  }
+  // The user didn't grant permission, so return false.
+  return false;
+}
+
 export async function saveBlobToDirectory(
   dir: DirectoryHandle,
   filename: string,
   blob: Blob,
 ): Promise<void> {
-  // @ts-ignore
-  const fileHandle = await dir.getFileHandle(filename, { create: true });
-  // @ts-ignore
-  const writable = await fileHandle.createWritable();
-  await writable.write(blob);
-  await writable.close();
+  try {
+    // Ensure we have write permission
+    const hasPermission = await verifyPermission(dir, true);
+    if (!hasPermission) {
+      throw new Error("Permission denied by user");
+    }
+
+    // @ts-ignore
+    const fileHandle = await dir.getFileHandle(filename, { create: true });
+    // @ts-ignore
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+  } catch (e) {
+    console.error("Failed to save to directory, falling back to download", e);
+    downloadBlob(blob, filename);
+  }
 }
 
 export async function saveTextFile(

@@ -4,16 +4,28 @@ import { Dashboard } from './components/Dashboard';
 import { CalibrationTool } from './components/tools/CalibrationTool';
 import { MeasurementTool } from './components/tools/MeasurementTool';
 import { SParamAnalysisTool } from './components/tools/SParamAnalysisTool';
+import { LibraryTool } from './components/tools/LibraryTool';
 import { SammTool } from './components/tools/SammTool';
-import { RlcModelTool } from './components/tools/RlcModelTool';
+import { CompactModelTool } from './components/tools/CompactModelTool';
+import { CutoffFreqTool } from './components/tools/CutoffFreqTool';
+import { TransmissionLineCalculator } from './components/tools/TransmissionLineCalculator';
+import { CableImpedanceTool } from './components/tools/CableImpedanceTool';
 import { Sobre } from './components/Sobre';
 import { ThemeToggle } from './components/ThemeToggle';
 import { Menu } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { LanguageProvider, useLanguage } from './lib/i18n';
 
-export default function App() {
+function AppContent() {
   const [currentTool, setCurrentTool] = useState<string>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [selectedLibraryFile, setSelectedLibraryFile] = useState<{name: string, device?: string} | null>(null);
+  const { t } = useLanguage();
+
+  const handleAnalyzeFile = (name: string, device?: string) => {
+    setSelectedLibraryFile({ name, device });
+    setCurrentTool('csv-analysis');
+  };
 
   const renderTool = () => {
     switch (currentTool) {
@@ -22,11 +34,19 @@ export default function App() {
       case 'measurement':
         return <MeasurementTool />;
       case 'csv-analysis':
-        return <SParamAnalysisTool />;
+        return <SParamAnalysisTool initialFile={selectedLibraryFile} onFileProcessed={() => setSelectedLibraryFile(null)} />;
+      case 'library':
+        return <LibraryTool onAnalyze={handleAnalyzeFile} />;
       case 'samm':
         return <SammTool />;
-      case 'rlc-model':
-        return <RlcModelTool />;
+      case 'compact-model':
+        return <CompactModelTool />;
+      case 'cutoff-freq':
+        return <CutoffFreqTool />;
+      case 'tline-calc':
+        return <TransmissionLineCalculator />;
+      case 'cable-impedance':
+        return <CableImpedanceTool />;
       case 'sobre':
         return <Sobre />;
       default:
@@ -56,7 +76,7 @@ export default function App() {
             onClick={() => setCurrentTool('dashboard')}
             className="ml-2 font-semibold hover:text-primary transition-colors"
           >
-            RF Suite
+            {t('app.title')}
           </button>
         </div>
 
@@ -68,7 +88,7 @@ export default function App() {
                   onClick={() => setCurrentTool('dashboard')}
                   className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center mb-2"
                 >
-                  ← Back to Dashboard
+                  {t('back_to_dashboard')}
                 </button>
              </div>
           )}
@@ -89,5 +109,13 @@ export default function App() {
       </div>
       <ThemeToggle />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <LanguageProvider>
+      <AppContent />
+    </LanguageProvider>
   );
 }

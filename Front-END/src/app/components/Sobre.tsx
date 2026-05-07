@@ -1,5 +1,6 @@
 import React from "react";
 import { Github, Linkedin, Activity, FileDown, Cpu } from "lucide-react";
+import { useLanguage } from "../lib/i18n";
 
 const AUTHOR_NAME = "Izan París Marcos";
 const AUTHOR_ROLE = "Telecommunications Engineer";
@@ -44,11 +45,12 @@ function Feature({
 }
 
 function GranaSatBadge() {
+  const { t } = useLanguage();
   return (
     <button
       onClick={() => openExternalUrl(GRANASAT_URL)}
       className="group inline-flex items-center gap-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 shadow-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 text-left"
-      title={`Colaboración con ${GRANASAT_NAME}`}
+      title={`${t('about.collaboration')} ${GRANASAT_NAME}`}
     >
       <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white overflow-hidden">
         <img
@@ -61,7 +63,7 @@ function GranaSatBadge() {
         />
       </div>
       <div className="leading-tight">
-        <div className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">En colaboración con</div>
+        <div className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">{t('about.collab_with')}</div>
         <div className="text-sm font-bold text-zinc-900 dark:text-zinc-100 group-hover:underline">{GRANASAT_NAME}</div>
       </div>
     </button>
@@ -69,16 +71,15 @@ function GranaSatBadge() {
 }
 
 export function Sobre() {
+  const { t } = useLanguage();
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
       {/* Header */}
       <div className="flex flex-col gap-2">
         <div>
-          <div className="text-4xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">Sobre</div>
+          <div className="text-4xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">{t('about.header')}</div>
           <div className="mt-2 max-w-3xl text-base text-zinc-600 dark:text-zinc-400">
-            <span className="font-semibold text-zinc-800 dark:text-zinc-200">RF Tool Suite Pro</span> es una aplicación web orientada a
-            ingeniería RF / SI para acelerar flujos de trabajo de análisis, simulación y postprocesado con una interfaz
-            moderna y consistente.
+            <span className="font-semibold text-zinc-800 dark:text-zinc-200">RF Tool Suite Pro</span> {t('about.intro')}
           </div>
         </div>
       </div>
@@ -87,7 +88,7 @@ export function Sobre() {
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Left: Author card */}
         <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 shadow-sm lg:col-span-1">
-          <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Autor</div>
+          <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{t('about.author')}</div>
 
           <div className="mt-4">
             <div className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{AUTHOR_NAME}</div>
@@ -95,7 +96,7 @@ export function Sobre() {
 
             {AUTHOR_EMAIL ? (
               <div className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
-                Contacto:{" "}
+                {t('about.contact')}
                 <button 
                   onClick={() => openExternalUrl(`mailto:${AUTHOR_EMAIL}`)}
                   className="font-medium text-zinc-900 dark:text-zinc-100 hover:underline"
@@ -127,7 +128,7 @@ export function Sobre() {
 
             {/* Colaboración SOLO aquí */}
             <div className="mt-6">
-              <div className="mb-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100">Colaboración</div>
+              <div className="mb-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100">{t('about.collaboration')}</div>
               <GranaSatBadge />
             </div>
           </div>
@@ -142,29 +143,27 @@ export function Sobre() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Feature
               icon={<Activity className="h-5 w-5" />}
-              title="Análisis rápido y consistente"
-              desc="Interfaz unificada para ejecutar herramientas, comparar mediciones y obtener KPIs clave sin perder tiempo."
+              title={t('about.feature1.title')}
+              desc={t('about.feature1.desc')}
             />
 
             <Feature
               icon={<Cpu className="h-5 w-5" />}
-              title="Backend Python"
-              desc="Procesado numérico y rutinas RF en Python para asegurar trazabilidad y evolución futura."
+              title={t('about.feature2.title')}
+              desc={t('about.feature2.desc')}
             />
 
             <Feature
               icon={<FileDown className="h-5 w-5" />}
-              title="Export profesional"
-              desc="Resultados exportables (CSV/figuras/report) para documentación, revisión y replicación de estudios."
+              title={t('about.feature3.title')}
+              desc={t('about.feature3.desc')}
             />
           </div>
 
           <div className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 shadow-sm">
-            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Objetivo del proyecto</div>
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{t('about.goal.title')}</div>
             <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-              Construir una suite modular de herramientas RF/SI donde cada “tool” sea fácilmente ampliable, con un
-              diseño moderno y un flujo de trabajo que priorice la productividad: cargar → configurar → ejecutar →
-              visualizar → exportar.
+              {t('about.goal.desc')}
             </p>
           </div>
         </div>

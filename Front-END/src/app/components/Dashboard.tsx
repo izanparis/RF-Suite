@@ -1,23 +1,27 @@
 import React from 'react';
-import { tools } from './Sidebar';
+import { useTools } from '../hooks/useTools';
 import { ArrowRight, Info } from 'lucide-react';
+import { useLanguage } from '../lib/i18n';
 
 interface DashboardProps {
   onSelectTool: (id: string) => void;
 }
 
 export function Dashboard({ onSelectTool }: DashboardProps) {
+  const { allTools } = useTools();
+  const { t } = useLanguage();
+
   return (
     <div className="max-w-5xl mx-auto p-6 md:p-10 space-y-10">
       <div className="space-y-4 text-center md:text-left">
-        <h2 className="text-4xl font-extrabold tracking-tight lg:text-5xl text-zinc-900">RF & Signal Integrity Suite</h2>
+        <h2 className="text-4xl font-extrabold tracking-tight lg:text-5xl text-zinc-900">{t('app.title')}</h2>
         <p className="text-xl text-muted-foreground max-w-2xl">
-          Plataforma avanzada para el análisis de parámetros S, modelado RLC y automatización de flujos de trabajo en ingeniería de radiofrecuencia.
+          {t('dash.desc')}
         </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {tools.map((tool) => {
+        {allTools.map((tool) => {
           const Icon = tool.icon;
           return (
             <button
@@ -35,7 +39,7 @@ export function Dashboard({ onSelectTool }: DashboardProps) {
                 {tool.description}
               </p>
               <div className="mt-auto flex items-center text-xs font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-                Abrir herramienta <ArrowRight className="w-3 h-3 ml-1" />
+                {t('dash.action.open')} <ArrowRight className="w-3 h-3 ml-1" />
               </div>
             </button>
           );
@@ -50,13 +54,13 @@ export function Dashboard({ onSelectTool }: DashboardProps) {
             <Info className="w-6 h-6 text-primary" />
           </div>
           <h3 className="text-lg font-semibold mb-2 group-hover:text-primary transition-colors text-zinc-900">
-            Sobre el proyecto
+            {t('about')}
           </h3>
           <p className="text-sm text-muted-foreground mb-4">
-            Información sobre el autor, el proyecto y colaboraciones.
+            {t('dash.about.desc')}
           </p>
           <div className="mt-auto flex items-center text-xs font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-            Ver detalles <ArrowRight className="w-3 h-3 ml-1" />
+            {t('dash.about.action')} <ArrowRight className="w-3 h-3 ml-1" />
           </div>
         </button>
       </div>

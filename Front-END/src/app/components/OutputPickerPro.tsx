@@ -3,6 +3,7 @@ import { Label } from "./ui/label";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { isFsAccessSupported, pickDirectory, DirectoryHandle } from "../lib/fsAccess";
+import { useLanguage } from "../lib/i18n";
 
 type Props = {
   label?: string;
@@ -15,16 +16,17 @@ export function OutputPickerPro({
   defaultName = "",
   onChange,
 }: Props) {
+  const { t } = useLanguage();
   const [filename, setFilename] = useState(defaultName);
   const [dirHandle, setDirHandle] = useState<DirectoryHandle | null>(null);
-  const [dirLabel, setDirLabel] = useState<string>("(no seleccionada)");
+  const [dirLabel, setDirLabel] = useState<string>(t('picker.no_folder'));
   const supported = useMemo(() => isFsAccessSupported(), []);
 
   async function onPickFolder() {
     try {
       const h = await pickDirectory();
       setDirHandle(h);
-      setDirLabel(h?.name ?? "(carpeta)");
+      setDirLabel(h?.name ?? t('picker.folder_generic'));
       onChange?.({ filename, dirHandle: h });
     } catch {
       // cancelado
@@ -33,7 +35,7 @@ export function OutputPickerPro({
 
   function onClearFolder() {
     setDirHandle(null);
-    setDirLabel("(no seleccionada)");
+    setDirLabel(t('picker.no_folder'));
     onChange?.({ filename, dirHandle: null });
   }
 
@@ -47,7 +49,7 @@ export function OutputPickerPro({
       <div className="flex items-baseline justify-between gap-2">
         <Label>{label}</Label>
         <span className="text-xs text-muted-foreground">
-          {supported ? `Carpeta: ${dirLabel}` : "(usa Chrome/Edge para elegir carpeta)"}
+          {supported ? t('picker.folder_label', dirLabel) : t('picker.unsupported')}
         </span>
       </div>
 
@@ -66,7 +68,7 @@ export function OutputPickerPro({
           disabled={!supported}
           type="button"
         >
-          Elegir carpeta…
+          {t('picker.btn_choose')}
         </Button>
 
         <Button
@@ -76,7 +78,7 @@ export function OutputPickerPro({
           disabled={!dirHandle}
           type="button"
         >
-          Limpiar
+          {t('picker.btn_clear')}
         </Button>
       </div>
     </div>

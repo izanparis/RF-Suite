@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { FREQ_UNITS, CAP_UNITS, IND_UNITS, toBase } from '../../lib/units';
+import { useLanguage } from '../../lib/i18n';
 
 type CompType = 'C' | 'L';
 
@@ -18,6 +19,7 @@ type CompRow = {
 };
 
 export function SammTool() {
+  const { t } = useLanguage();
   const [fmin, setFmin] = useState('1');
   const [fminUnit, setFminUnit] = useState('MHz');
   const [fmax, setFmax] = useState('1');
@@ -67,7 +69,7 @@ export function SammTool() {
         setResult(data);
       } catch (error) {
         console.error(error);
-        alert('Error al calcular: ' + (error instanceof Error ? error.message : String(error)));
+        alert(t('samm.alert.error_calc') + (error instanceof Error ? error.message : String(error)));
       } finally {
         setLoading(false);
       }
@@ -75,7 +77,7 @@ export function SammTool() {
 
     if (id === 'export') {
       if (!result || !result.report_content) {
-        alert('Primero realiza el cálculo.');
+        alert(t('samm.alert.no_calc'));
         return;
       }
       try {
@@ -83,9 +85,9 @@ export function SammTool() {
         // Usamos un nombre por defecto ya que SammTool no tiene un selector de nombre aún,
         // o podemos añadir uno. Por ahora 'samm_report.csv'.
         await saveTextFile(null, 'samm_report.csv', result.report_content);
-        alert('Reporte exportado.');
+        alert(t('samm.alert.exported'));
       } catch (e) {
-        alert('Error al exportar: ' + e);
+        alert(t('samm.alert.error_export') + e);
       }
     }
   };
@@ -114,22 +116,22 @@ export function SammTool() {
 
   return (
     <ToolShell
-      title="Selección Automática del Modelo de Medición (SAMM)"
-      description="Introduce tu rango de frecuencia y los límites de S21, y define componentes para estimar el modelo de medición recomendado."
+      title={t('samm.title')}
+      description={t('samm.desc')}
       actions={[
-        { id: 'calc', label: 'Calcular', variant: 'default' },
-        { id: 'export', label: 'Exportar', variant: 'outline' },
+        { id: 'calc', label: t('samm.action.calc'), variant: 'default' },
+        { id: 'export', label: t('samm.action.export'), variant: 'outline' },
       ]}
       onAction={handleAction}
     >
       <Card>
         <CardHeader>
-          <CardTitle>Parámetros de entrada</CardTitle>
+          <CardTitle>{t('samm.input.title')}</CardTitle>
           <CardDescription></CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <UnitInput
-            label="Fmin"
+            label={t('samm.input.fmin')}
             value={fmin}
             unit={fminUnit}
             units={FREQ_UNITS}
@@ -137,7 +139,7 @@ export function SammTool() {
             onChangeUnit={setFminUnit}
           />
           <UnitInput
-            label="Fmax"
+            label={t('samm.input.fmax')}
             value={fmax}
             unit={fmaxUnit}
             units={FREQ_UNITS}
@@ -145,7 +147,7 @@ export function SammTool() {
             onChangeUnit={setFmaxUnit}
           />
           <UnitInput
-            label="Frecuencia de resonancia"
+            label={t('samm.input.f0')}
             value={f0}
             unit={f0Unit}
             units={FREQ_UNITS}
@@ -154,7 +156,7 @@ export function SammTool() {
           />
 
           <div className="space-y-2">
-            <Label>S21 min (dB)</Label>
+            <Label>{t('samm.input.s21min')}</Label>
             <div className="grid grid-cols-12 gap-2 items-center">
               <div className="col-span-7 h-10 w-full rounded-md border border-input bg-input-background flex items-center px-3 focus-within:ring-1 focus-within:ring-ring">
                 <input
@@ -163,13 +165,13 @@ export function SammTool() {
                   onChange={(e) => setS21min(e.target.value)}
                 />
               </div>
-              <div className="col-span-5 h-10 w-full rounded-md border border-input bg-input-background flex items-center justify-center text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              <div className="col-span-5 h-10 w-full rounded-md border border-input bg-input-background flex items-center justify-center text-xs font-medium text-muted-foreground tracking-wider">
                 dB
               </div>
             </div>
           </div>
           <div className="space-y-2">
-            <Label>S21 max (dB)</Label>
+            <Label>{t('samm.input.s21max')}</Label>
             <div className="grid grid-cols-12 gap-2 items-center">
               <div className="col-span-7 h-10 w-full rounded-md border border-input bg-input-background flex items-center px-3 focus-within:ring-1 focus-within:ring-ring">
                 <input
@@ -178,7 +180,7 @@ export function SammTool() {
                   onChange={(e) => setS21max(e.target.value)}
                 />
               </div>
-              <div className="col-span-5 h-10 w-full rounded-md border border-input bg-input-background flex items-center justify-center text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              <div className="col-span-5 h-10 w-full rounded-md border border-input bg-input-background flex items-center justify-center text-xs font-medium text-muted-foreground tracking-wider">
                 dB
               </div>
             </div>
@@ -188,17 +190,17 @@ export function SammTool() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Componentes</CardTitle>
+          <CardTitle>{t('samm.comp.title')}</CardTitle>
           <CardDescription>
           
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid grid-cols-12 gap-2 text-xs text-muted-foreground">
-            <div className="col-span-2">Tipo</div>
-            <div className="col-span-6">Valor</div>
-            <div className="col-span-2">Unidad</div>
-            <div className="col-span-2 text-right">Acciones</div>
+            <div className="col-span-2">{t('samm.comp.header_type')}</div>
+            <div className="col-span-6">{t('samm.comp.header_val')}</div>
+            <div className="col-span-2">{t('samm.comp.header_unit')}</div>
+            <div className="col-span-2 text-right">{t('samm.comp.header_action')}</div>
           </div>
 
           {rows.map((r, idx) => (
@@ -212,7 +214,7 @@ export function SammTool() {
                 }}
               >
                 <SelectTrigger className="col-span-2">
-                  <SelectValue placeholder="Tipo" />
+                  <SelectValue placeholder={t('samm.comp.placeholder_type')} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="C">C</SelectItem>
@@ -230,7 +232,7 @@ export function SammTool() {
 
               <Select value={r.unit} onValueChange={(u) => updateRow(idx, { unit: u })}>
                 <SelectTrigger className="col-span-2">
-                  <SelectValue placeholder="Unidad" />
+                  <SelectValue placeholder={t('samm.comp.placeholder_unit')} />
                 </SelectTrigger>
                 <SelectContent>
                   {unitOptionsFor(r.type).map((u) => (
@@ -243,30 +245,30 @@ export function SammTool() {
 
               <div className="col-span-2 flex justify-end">
                 <Button variant="ghost" onClick={() => removeRow(idx)}>
-                  Eliminar
+                  {t('samm.comp.btn_remove')}
                 </Button>
               </div>
             </div>
           ))}
 
           <Button variant="secondary" onClick={addRow}>
-            Añadir componente
+            {t('samm.comp.btn_add')}
           </Button>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Resultado</CardTitle>
+          <CardTitle>{t('samm.result.title')}</CardTitle>
           <CardDescription>
-            {loading ? 'Calculando...' : result ? 'Análisis completado con éxito.' : 'Presiona Calcular para ver los resultados.'}
+            {loading ? t('samm.result.loading') : result ? t('samm.result.success') : t('samm.result.idle')}
           </CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (
             <div className="flex flex-col items-center justify-center p-12 space-y-4">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-              <p className="text-muted-foreground italic">Procesando con el backend de Python...</p>
+              <p className="text-muted-foreground italic">{t('samm.result.processing')}</p>
             </div>
           ) : result ? (
             <div className="space-y-6">
@@ -279,14 +281,14 @@ export function SammTool() {
               </div>
               
               <div className="space-y-4">
-                <h4 className="font-semibold text-sm">Tabla de recomendaciones:</h4>
+                <h4 className="font-semibold text-sm">{t('samm.result.table_title')}</h4>
                 <div className="rounded-md border border-border overflow-hidden">
                   <table className="w-full text-sm">
                     <thead className="bg-muted text-muted-foreground text-left">
                       <tr>
-                        <th className="p-2 font-medium">Componente</th>
-                        <th className="p-2 font-medium">Z min/max</th>
-                        <th className="p-2 font-medium">Modelo Recomendado</th>
+                        <th className="p-2 font-medium">{t('samm.result.col_comp')}</th>
+                        <th className="p-2 font-medium">{t('samm.result.col_z')}</th>
+                        <th className="p-2 font-medium">{t('samm.result.col_model')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -304,7 +306,7 @@ export function SammTool() {
             </div>
           ) : (
             <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground">
-              Aquí se mostrará el mapa/rango recomendado por SAMM tras realizar el cálculo.
+              {t('samm.result.placeholder')}
             </div>
           )}
         </CardContent>
