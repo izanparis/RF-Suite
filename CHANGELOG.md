@@ -4,6 +4,26 @@ Todos los cambios notables en este proyecto serán documentados en este archivo.
 
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] - 2026-05-07
+
+### Añadido
+- **Nueva Herramienta "Biblioteca"**:
+    - Interfaz profesional estilo explorador de archivos para gestionar mediciones, calibraciones y extracciones.
+    - **Modo Directorio**: Tabla detallada con nombres, dispositivos asociados, tamaños y fechas de modificación.
+    - **Filtro de Dispositivo (VNA)**: Selector integrado para filtrar archivos por equipo de medida (ej: NanoVNA-Izan, LAB1, LAB2).
+    - **Acciones Rápidas**:
+        - **Abrir Ubicación**: Apertura nativa de la carpeta contenedora en el explorador de archivos del sistema operativo (Windows Explorer/macOS Finder).
+        - **Análisis Instantáneo**: Acceso directo a la herramienta de Análisis S2P precargando el archivo seleccionado.
+        - **Gestión de Archivos**: Eliminación física de archivos con diálogo de confirmación desde la propia web.
+- **API de Gestión de Archivos**: Nuevos endpoints en el backend para listado consolidado, apertura de carpetas y borrado seguro de archivos.
+- **Pre-carga de Análisis**: Capacidad de la herramienta de Análisis S-Params para recibir archivos iniciales desde otras herramientas, automatizando el flujo de trabajo.
+
+### Cambiado
+- **Refactorización de Rutas**: Normalización de la estructura de la biblioteca bajo una jerarquía coherente `Biblioteca/{Tipo}/{Dispositivo}` en el servidor.
+- **UI de Análisis S2P**: Mejora en el selector de mediciones del servidor para ser más consistente con el nuevo sistema de biblioteca.
+
+---
+
 ## [1.3.0] - 2026-05-07
 
 ### Añadido
