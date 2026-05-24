@@ -59,32 +59,30 @@ def process_s_params_touchstone(file_content, filename):
 
         plots = []
 
-        # --- Plot 1: Magnitude (dB) ---
+        # --- Plot 1: S11 (dB) ---
         fig1 = plt.figure(figsize=(10, 6))
-        plt.plot(freq_mhz, s11_db, label='S11 (dB)', linewidth=1.5)
-        if has_s21:
-            plt.plot(freq_mhz, s21_db, label='S21 (dB)', linewidth=1.5)
-        plt.title(f'Magnitud Parámetros S - {filename}')
+        plt.plot(freq_mhz, s11_db, label='S11 (dB)', color='#3b82f6', linewidth=1.5)
+        plt.title(f'Magnitud S11 - {filename}')
         plt.xlabel('Frecuencia (MHz)')
         plt.ylabel('Magnitud (dB)')
         plt.grid(True, alpha=0.3)
         plt.legend()
-        plot_mag = get_base64_plot(fig1)
-        plots.append({"id": "mag", "title": "Magnitud (dB)", "image": plot_mag})
+        plot_s11 = get_base64_plot(fig1)
+        plots.append({"id": "s11", "title": "S11 (dB)", "image": plot_s11})
         plt.close(fig1)
 
-        # --- Plot 2: VSWR ---
-        fig2 = plt.figure(figsize=(10, 6))
-        plt.plot(freq_mhz, vswr, color='orange', label='VSWR Port 1', linewidth=1.5)
-        plt.title(f'VSWR - {filename}')
-        plt.xlabel('Frecuencia (MHz)')
-        plt.ylabel('VSWR')
-        plt.ylim(1, max(min(np.max(vswr), 10), 2))
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-        plot_vswr = get_base64_plot(fig2)
-        plots.append({"id": "vswr", "title": "VSWR", "image": plot_vswr})
-        plt.close(fig2)
+        # --- Plot 2: S21 (dB) ---
+        if has_s21:
+            fig2 = plt.figure(figsize=(10, 6))
+            plt.plot(freq_mhz, s21_db, label='S21 (dB)', color='#ef4444', linewidth=1.5)
+            plt.title(f'Magnitud S21 - {filename}')
+            plt.xlabel('Frecuencia (MHz)')
+            plt.ylabel('Magnitud (dB)')
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            plot_s21 = get_base64_plot(fig2)
+            plots.append({"id": "s21", "title": "S21 (dB)", "image": plot_s21})
+            plt.close(fig2)
 
         # --- Plot 3: Impedance Magnitude (LOG-LOG) ---
         fig_z = plt.figure(figsize=(10, 6))
@@ -97,7 +95,7 @@ def process_s_params_touchstone(file_content, filename):
             plt.title(f'Magnitud de Impedancia Extraída |Z| - {filename}')
         
         plt.xlabel('Frecuencia (MHz)')
-        plt.ylabel('Impedancia ($\Omega$)')
+        plt.ylabel(r'Impedancia ($\Omega$)')
         plt.grid(True, which="both", ls="-", alpha=0.2)
         plt.legend()
         plot_zmag = get_base64_plot(fig_z)

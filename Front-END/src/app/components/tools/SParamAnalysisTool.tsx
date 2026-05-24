@@ -16,7 +16,7 @@ import type { DirectoryHandle } from '../../lib/fsAccess';
 import { useLanguage } from '../../lib/i18n';
 
 interface SParamAnalysisToolProps {
-  initialFile?: { name: string, device?: string } | null;
+  initialFile?: { name: string, device?: string, componentType?: string | null } | null;
   onFileProcessed?: () => void;
 }
 
@@ -35,9 +35,10 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
   const [markers, setMarkers] = useState<any[]>([]);
 
   // Biblioteca de mediciones del servidor
-  const [measurements, setMeasurements] = useState<{name: string, size: number, mtime: number}[]>([]);
+  const [measurements, setMeasurements] = useState<{name: string, size: number, mtime: number, component_type?: string | null}[]>([]);
   const [selectedMeasName, setSelectedMeasName] = useState<string>("");
   const [device, setDevice] = useState('NanoVNA-Izan');
+  const [componentFilter, setComponentFilter] = useState('all');
   
   // Dragging state for the markers panel
   const [panelPos, setPanelPos] = useState({ x: 24, y: 64 }); // Initial relative to top-right
@@ -46,7 +47,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
 
   useEffect(() => {
     fetchMeasurements();
-  }, [device]);
+  }, [device, componentFilter]);
 
   // Manejar archivo inicial proveniente de la biblioteca
   useEffect(() => {
@@ -54,7 +55,10 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
       if (initialFile.device) {
         setDevice(initialFile.device);
       }
-      handleMeasSelect(initialFile.name, initialFile.device);
+      if (initialFile.componentType) {
+        setComponentFilter(initialFile.componentType);
+      }
+      handleMeasSelect(initialFile.name, initialFile.device, initialFile.componentType);
       
       if (onFileProcessed) {
         onFileProcessed();
@@ -64,7 +68,8 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
 
   const fetchMeasurements = async () => {
     try {
-      const response = await fetch(`http://localhost:8080/api/vna/measurements?device=${encodeURIComponent(device)}`);
+      const componentParam = componentFilter !== 'all' ? `&component_type=${encodeURIComponent(componentFilter)}` : '';
+      const response = await fetch(`http://localhost:8080/api/vna/measurements?device=${encodeURIComponent(device)}${componentParam}`);
       if (response.ok) {
         const data = await response.json();
         setMeasurements(data);
@@ -74,7 +79,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
     }
   };
 
-  const handleMeasSelect = async (val: string, customDevice?: string) => {
+  const handleMeasSelect = async (val: string, customDevice?: string, customComponent?: string | null) => {
     setSelectedMeasName(val);
     if (!val) return;
 
@@ -85,15 +90,33 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
     setS2pFile(null); // Quitar archivo local si se elige biblioteca
 
     const targetDevice = customDevice || device;
+    const targetComponent = customComponent || measurements.find(m => m.name === val)?.component_type || (componentFilter !== 'all' ? componentFilter : null);
 
     try {
-      const response = await fetch(`http://localhost:8080/api/vna/measurements/analyze/${encodeURIComponent(val)}?device=${encodeURIComponent(targetDevice)}`);
+      const componentParam = targetComponent ? `&component_type=${encodeURIComponent(targetComponent)}` : '';
+      const response = await fetch(`http://localhost:8080/api/vna/measurements/analyze/${encodeURIComponent(val)}?device=${encodeURIComponent(targetDevice)}${componentParam}`);
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || 'Error al analizar la medición del servidor');
       }
       const data = await response.json();
       setResult(data);
+
+      // Auto-save analysis results to server
+      const matched = measurements.find(m => m.name === val) as any;
+      const relativePath = matched?.relative_path || val;
+      fetch('http://localhost:8080/api/library/measurement/analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          measurement_relative_path: relativePath,
+          tool_name: 's_params',
+          results: {
+            summary: data.summary,
+            plots: data.plots.map((p: any) => ({ id: p.id, title: p.title, image: p.image }))
+          }
+        })
+      }).catch(err => console.error("Error auto-saving S-params analysis:", err));
     } catch (error) {
       console.error(error);
       alert('Error: ' + (error instanceof Error ? error.message : String(error)));
@@ -255,7 +278,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
     const currentPlot = result.plots[activePlotIdx];
     const hasS21 = result.data.n_ports >= 2;
 
-    if (['mag', 'phase', 'vswr', 'zmag'].includes(currentPlot.id)) {
+    if (['s11', 's21', 'phase', 'zmag'].includes(currentPlot.id)) {
       return (
         <div className="w-full h-[500px] bg-white dark:bg-zinc-950/50 rounded-xl p-4 border border-border shadow-inner animate-in fade-in zoom-in duration-300 relative group/chart">
           <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 text-center">
@@ -331,15 +354,24 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                 }}
               />
               
-              {currentPlot.id === 'mag' && (
+              {currentPlot.id === 's11' && (
                 <>
                   <Line type="monotone" dataKey="s11" name="S11" stroke="#3b82f6" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
-                  {hasS21 && <Line type="monotone" dataKey="s21" name="S21" stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />}
                   {markers.map((m, i) => (
                     <React.Fragment key={i}>
                       <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
                       <ReferenceDot x={m.freqMHz} y={m.s11} r={4} fill="#3b82f6" stroke="white" />
-                      {hasS21 && <ReferenceDot x={m.freqMHz} y={m.s21} r={4} fill="#ef4444" stroke="white" />}
+                    </React.Fragment>
+                  ))}
+                </>
+              )}
+              {currentPlot.id === 's21' && hasS21 && (
+                <>
+                  <Line type="monotone" dataKey="s21" name="S21" stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
+                  {markers.map((m, i) => (
+                    <React.Fragment key={i}>
+                      <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
+                      <ReferenceDot x={m.freqMHz} y={m.s21} r={4} fill="#ef4444" stroke="white" />
                     </React.Fragment>
                   ))}
                 </>
@@ -353,17 +385,6 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                       <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
                       <ReferenceDot x={m.freqMHz} y={m.phase11} r={4} fill="#3b82f6" stroke="white" />
                       {hasS21 && <ReferenceDot x={m.freqMHz} y={m.phase21} r={4} fill="#ef4444" stroke="white" />}
-                    </React.Fragment>
-                  ))}
-                </>
-              )}
-              {currentPlot.id === 'vswr' && (
-                <>
-                  <Line type="monotone" dataKey="vswr" name="VSWR" stroke="#10b981" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
-                  {markers.map((m, i) => (
-                    <React.Fragment key={i}>
-                      <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
-                      <ReferenceDot x={m.freqMHz} y={m.vswr} r={4} fill="#10b981" stroke="white" />
                     </React.Fragment>
                   ))}
                 </>
@@ -429,7 +450,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                           <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100">{m.freqMHz}</span>
                         </div>
                         
-                        {currentPlot.id === 'mag' && (
+                        {(currentPlot.id === 's11' || currentPlot.id === 's21') && (
                           <>
                             <div className="flex justify-between">
                               <span className="text-blue-500">S11:</span>
@@ -457,13 +478,6 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                               </div>
                             )}
                           </>
-                        )}
-                        
-                        {currentPlot.id === 'vswr' && (
-                          <div className="flex justify-between">
-                            <span className="text-emerald-500">VSWR:</span>
-                            <span className="font-mono font-bold">{m.vswr.toFixed(2)}</span>
-                          </div>
                         )}
                         
                         {currentPlot.id === 'zmag' && (
@@ -547,6 +561,21 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                     </SelectContent>
                   </Select>
                </div>
+
+               <div className="space-y-2">
+                 <Label className="text-[10px] uppercase font-bold text-muted-foreground">Componente</Label>
+                 <Select value={componentFilter} onValueChange={setComponentFilter}>
+                    <SelectTrigger className="bg-input-background h-8 text-xs">
+                      <SelectValue placeholder="Filtrar componente" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      <SelectItem value="capacitor">Condensador</SelectItem>
+                      <SelectItem value="inductor">Bobina</SelectItem>
+                      <SelectItem value="resistor">Resistencia</SelectItem>
+                    </SelectContent>
+                  </Select>
+               </div>
                
                <div className="space-y-2">
                  <Label className="text-[10px] uppercase font-bold text-muted-foreground">Medición</Label>
@@ -557,7 +586,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                     <SelectContent>
                       {measurements.map((m) => (
                         <SelectItem key={m.name} value={m.name}>
-                          {m.name}
+                          {m.component_type ? `${m.name} (${m.component_type})` : m.name}
                         </SelectItem>
                       ))}
                     </SelectContent>

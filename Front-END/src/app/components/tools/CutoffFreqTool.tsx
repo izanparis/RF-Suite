@@ -100,6 +100,27 @@ export function CutoffFreqTool() {
       }
       const data = await response.json();
       setResult(data);
+
+      // Auto-save analysis results to server
+      if (selectedMeasName) {
+        const matched = measurements.find((m: any) => m.name === selectedMeasName) as any;
+        const relativePath = matched?.relative_path || selectedMeasName;
+        fetch('http://localhost:8080/api/library/measurement/analysis', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            measurement_relative_path: relativePath,
+            tool_name: 'cutoff_freq',
+            results: {
+              cutoff_frequency_hz: data.cutoff_frequency_hz,
+              cutoff_frequency_mhz: data.cutoff_frequency_mhz,
+              value_db: data.value_db,
+              search_type: searchType,
+              label: data.label
+            }
+          })
+        }).catch(err => console.error("Error auto-saving cutoff frequency analysis:", err));
+      }
     } catch (error) {
       console.error(error);
       alert("Error: " + (error instanceof Error ? error.message : "Error al calcular la frecuencia de corte."));

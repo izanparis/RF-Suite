@@ -42,16 +42,28 @@ def detect_valid_fit_band(freq, zdut):
     slope = local_log_slope(freq, moving_average(magz, 11))
     idx_srf = int(np.argmin(magz))
     f_srf = freq[idx_srf]
-    pre = np.arange(len(freq)) < max(idx_srf, 5)
-    capacitive_slope = slope < -0.55
-    capacitive_phase = phase < -35
-    good = pre & (capacitive_slope | capacitive_phase)
-    if np.any(good):
-        first = np.where(good)[0][0]
-        idx_min = max(0, first - 2)
-    else:
-        idx_min = max(0, len(freq)//50)
+    
+    # Búsqueda hacia atrás: queremos INCLUIR las frecuencias bajas. 
+    # Solo paramos si la fase se vuelve inductiva (ej. > 0) a bajas frecuencias por ruido.
+    idx_min = 0
+    for i in range(idx_srf, -1, -1):
+        if phase[i] > 0 and i < idx_srf - 5:
+            idx_min = i + 1
+            break
+            
+    # Búsqueda hacia adelante: avanzamos hasta que encontremos otra resonancia
+    # (fase vuelve a caer a negativo después de haber sido inductiva)
     idx_max = len(freq) - 1
+    for i in range(idx_srf, len(freq)):
+        if phase[i] < -10 and i > idx_srf + 5: # Siguiente resonancia
+            idx_max = i
+            break
+                
+    # Medida de seguridad
+    if idx_max <= idx_min + 5:
+        idx_min = max(0, idx_srf - int(len(freq)*0.05))
+        idx_max = min(len(freq) - 1, idx_srf + int(len(freq)*0.05))
+        
     return idx_min, idx_max, f_srf, slope
 
 def estimate_c_effective(freq, zdut, fit_mask):
@@ -258,9 +270,15 @@ def plot_to_base64_v2():
 def extract_compact_model(touchstone_content, filename, method="shunt", z0=50.0):
     with tempfile.NamedTemporaryFile(suffix=".s2p", delete=False) as tmp:
         tmp.write(touchstone_content); tmp_path = tmp.name
-    try: ntwk = rf.Network(tmp_path)
+    try:
+        ntwk = rf.Network(tmp_path)
+    except Exception as e:
+        raise ValueError(f"El archivo Touchstone no es válido o está corrupto: {e}")
     finally:
         if os.path.exists(tmp_path): os.remove(tmp_path)
+        
+    if ntwk.nports < 2:
+        raise ValueError("La extracción de modelos compactos requiere una medición de 2 puertos (.S2P) para modelar la transferencia (S21).")
     
     freq_full = ntwk.f; s21_full = ntwk.s[:, 1, 0]; mask = freq_full <= F_MAX_VALID
     freq_all = freq_full[mask]; s21_all = s21_full[mask]; zdut_all = shunt_through_z_from_s21(s21_all, z0); ydut_all = 1/zdut_all
@@ -271,12 +289,25 @@ def extract_compact_model(touchstone_content, filename, method="shunt", z0=50.0)
         freq = freq_all[fit_slice]; zdut = zdut_all[fit_slice]; ydut = ydut_all[fit_slice]
         f_srf, idx_srf = estimate_srf(freq, zdut); c_eff = estimate_c_effective(freq, zdut, np.ones_like(freq, dtype=bool))
         esr = estimate_esr(freq, zdut, idx_srf); esl = estimate_esl(c_eff, f_srf); cap_class = classify_cap(c_eff); cfg = auto_limits_and_strategy(cap_class, c_eff, freq[-1])
-        f_extra = detect_extra_resonances(freq, zdut, f_srf, cfg["N_EXTRA"])
-        p0, lo, hi = initial_and_bounds(freq, zdut, ydut, cfg, c_eff, f_srf, idx_srf, esr, esl, f_extra)
-        p0_clipped = np.clip(p0, lo*1.001, hi/1.001)
-        res = least_squares(residual, np.log10(p0_clipped), bounds=(np.log10(lo), np.log10(hi)), args=(freq, zdut, ydut, cfg["N_EXTRA"], c_eff), max_nfev=150000, xtol=1e-13, ftol=1e-13, gtol=1e-13)
-        p = 10**res.x; zfit_all = 1/y_model(freq_all, p, cfg["N_EXTRA"]); spice_netlist = generate_shunt_spice(p, cfg["N_EXTRA"], subckt_name=subckt_name)
-        summary = {"method": "Physical Shunt", "c_eff": c_eff, "nrms": np.sqrt(np.mean(np.abs(zdut_all-zfit_all)**2)) / np.sqrt(np.mean(np.abs(zdut_all)**2))}
+        
+        best_p = None; best_nrms = float('inf'); best_n_extra = 0
+        for n_ext in range(0, 6): # Bucle hasta 5 ramas
+            cfg["N_EXTRA"] = n_ext
+            f_extra = detect_extra_resonances(freq, zdut, f_srf, n_ext)
+            p0, lo, hi = initial_and_bounds(freq, zdut, ydut, cfg, c_eff, f_srf, idx_srf, esr, esl, f_extra)
+            p0_clipped = np.clip(p0, lo*1.001, hi/1.001)
+            res = least_squares(residual, np.log10(p0_clipped), bounds=(np.log10(lo), np.log10(hi)), args=(freq, zdut, ydut, n_ext, c_eff), max_nfev=10000, xtol=1e-8, ftol=1e-8, gtol=1e-8)
+            p = 10**res.x; zfit_current = 1/y_model(freq_all, p, n_ext)
+            nrms = float(np.sqrt(np.mean(np.abs(zdut_all-zfit_current)**2)) / np.sqrt(np.mean(np.abs(zdut_all)**2)))
+            
+            if best_p is None or nrms < best_nrms * 0.95: # Requiere al menos 5% de mejora para justificar añadir rama
+                best_nrms = nrms; best_p = p; best_n_extra = n_ext
+                
+            if best_nrms < 0.02: # Si el error es menor al 2%, el valor es aceptable
+                break
+                
+        p = best_p; zfit_all = 1/y_model(freq_all, p, best_n_extra); spice_netlist = generate_shunt_spice(p, best_n_extra, subckt_name=subckt_name)
+        summary = {"method": "Physical Shunt", "c_eff": c_eff, "nrms": best_nrms}
     elif method == "vf":
         best = run_vf_analysis(freq_all, ntwk[mask].frequency, zdut_all, z0); zfit_all = best["z_fit"]; spice_netlist = generate_vf_spice(freq_all, zfit_all, subckt_name=subckt_name)
         summary = {"method": "Vector Fitting", "c_eff": 1.0, "nrms": best["nrms_z"]}

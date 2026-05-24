@@ -1,151 +1,176 @@
 import React from 'react';
 import {
+  Activity,
+  BookOpen,
+  ChevronRight,
+  CircuitBoard,
+  Clock3,
+  Cpu,
+  Gauge,
+  Info,
+  Library,
+  Microscope,
   Radio,
-  LayoutDashboard,
-  Info
+  SlidersHorizontal,
+  Table,
+  Zap,
 } from 'lucide-react';
-
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { cn } from './ui/utils';
 import { useLanguage } from '../lib/i18n';
-import { useTools } from '../hooks/useTools';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 interface SidebarProps {
   currentTool: string;
   onSelectTool: (tool: string) => void;
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
+  backendStatus: 'checking' | 'online' | 'offline';
+  collapsed: boolean;
 }
 
-export function Sidebar({ currentTool, onSelectTool, isOpen, setIsOpen }: SidebarProps) {
+const primaryNav = [
+  { id: 'dashboard', label: 'Dashboard', icon: Gauge },
+  { id: 'calibration', label: 'Calibrar', icon: SlidersHorizontal },
+  { id: 'measurement', label: 'Medir', icon: Activity },
+  { id: 'csv-analysis', label: 'Analizar', icon: Table },
+  { id: 'compact-model', label: 'Extracción RLC', icon: Cpu },
+  { id: 'samm', label: 'SAMM', icon: Microscope },
+  { id: 'rf-tools', label: 'Herramientas RF', icon: Zap },
+  { id: 'library', label: 'Biblioteca', icon: Library },
+];
+
+const rfToolIds = ['cutoff-freq', 'correction', 'tline-calc', 'cable-impedance'];
+
+export function Sidebar({ currentTool, onSelectTool, isOpen, setIsOpen, backendStatus, collapsed }: SidebarProps) {
   const { t } = useLanguage();
-  const { mainTools, labTools } = useTools();
+  const backendOnline = backendStatus === 'online';
+
+  const selectTool = (tool: string) => {
+    onSelectTool(tool);
+    setIsOpen(false);
+  };
 
   return (
     <>
-      {/* Mobile Overlay */}
-      <div 
+      <div
         className={cn(
-          "fixed inset-0 bg-black/50 z-20 md:hidden transition-opacity",
-          isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+          'fixed inset-0 z-20 bg-black/50 transition-opacity md:hidden',
+          isOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
         )}
         onClick={() => setIsOpen(false)}
       />
 
-      {/* Sidebar Content */}
-      <div className={cn(
-        "fixed md:sticky top-0 left-0 h-screen w-64 bg-card border-r border-border z-30 transition-transform duration-300 ease-in-out md:translate-x-0 overflow-y-auto",
-        isOpen ? "translate-x-0" : "-translate-x-full"
-      )}>
-        <button 
-          onClick={() => {
-            onSelectTool('dashboard');
-            setIsOpen(false);
-          }}
-          className="h-16 flex items-center px-6 border-b border-border w-full hover:bg-muted/50 transition-colors text-left"
+      <aside
+        className={cn(
+          'rf-sidebar fixed left-0 top-0 z-30 flex h-screen shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-[8px_0_30px_rgba(15,23,42,0.04)] transition-all duration-300 ease-in-out md:sticky md:translate-x-0',
+          collapsed ? 'md:w-[76px]' : 'w-[286px]',
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        )}
+      >
+        <button
+          onClick={() => selectTool('dashboard')}
+          className={cn(
+            'rf-sidebar-brand flex h-[68px] items-center gap-3 border-b border-sidebar-border px-4 text-left transition-colors hover:bg-sidebar-accent/70',
+            collapsed && 'justify-center px-2'
+          )}
         >
-          <Radio className="w-6 h-6 text-primary mr-2" />
-          <h1 className="text-xl font-bold tracking-tight">{t('app.title')}</h1>
+          <span className="flex h-10 w-10 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-sm">
+            <Radio className="h-5 w-5" />
+          </span>
+          <span className={cn('min-w-0', collapsed && 'hidden')}>
+            <span className="block truncate text-base font-bold tracking-tight">{t('app.title')}</span>
+            <span className="block truncate text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Lab workspace</span>
+          </span>
         </button>
 
-        <div className="p-4 space-y-1">
+        <div className={cn('rf-sidebar-content min-h-0 flex-1 space-y-4 overflow-hidden px-3 py-4', collapsed && 'px-2')}>
+          <section className="rf-sidebar-nav space-y-1">
+            <div className={cn('px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground', collapsed && 'hidden')}>
+              Navegacion
+            </div>
+            {primaryNav.map((item) => {
+              const Icon = item.icon;
+              const isActive = currentTool === item.id || (item.id === 'rf-tools' && rfToolIds.includes(currentTool));
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => selectTool(item.id)}
+                  className={cn(
+                    'rf-sidebar-nav-item flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-sm font-medium transition-colors',
+                    collapsed && 'justify-center px-0',
+                    isActive
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                  )}
+                >
+                  <Icon className="h-4.5 w-4.5" />
+                  <span className={cn('truncate', collapsed && 'hidden')}>{item.label}</span>
+                </button>
+              );
+            })}
+          </section>
+
+          <section className={cn('rf-sidebar-sessions space-y-1.5', collapsed && 'hidden')}>
+            <div className="flex items-center justify-between px-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Sesiones</span>
+              <Clock3 className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            {[
+              ['HP8752A S11', 'Calibracion reciente'],
+              ['Cable SMA', 'Medicion S2P'],
+              ['cap_470p', 'Modelo compacto'],
+            ].map(([title, subtitle]) => (
+              <button
+                key={title}
+                onClick={() => selectTool('library')}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              >
+                <BookOpen className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-semibold">{title}</span>
+                  <span className="block truncate text-[11px]">{subtitle}</span>
+                </span>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            ))}
+          </section>
+
+        </div>
+
+        <div className={cn('rf-sidebar-status space-y-2 border-t border-sidebar-border p-3', collapsed && 'p-2')}>
           <button
-            onClick={() => {
-              onSelectTool('dashboard');
-              setIsOpen(false);
-            }}
+            onClick={() => selectTool('sobre')}
             className={cn(
-              "w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors mb-4",
-              currentTool === 'dashboard' 
-                ? "bg-primary/10 text-primary" 
-                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              'flex w-full items-center gap-2 rounded-lg border border-sidebar-border bg-[var(--rf-panel-soft)] px-3 py-2 text-sm font-medium transition-colors',
+              collapsed && 'justify-center px-0',
+              currentTool === 'sobre'
+                ? 'border-primary/40 bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
             )}
+            title="Sobre mi"
           >
-            <LayoutDashboard className={cn("w-5 h-5", currentTool === 'dashboard' ? "text-primary" : "text-muted-foreground")} />
-            {t('dashboard')}
+            <Info className="h-4 w-4" />
+            <span className={cn(collapsed && 'hidden')}>Sobre mi</span>
           </button>
 
-          {/* Sección Ingeniería RF */}
-          <div className="text-xs font-semibold text-muted-foreground mb-2 px-2 uppercase tracking-wider mt-4">
-            {t('rf_engineering')}
-          </div>
-          {mainTools.map((tool) => {
-            const Icon = tool.icon;
-            const isActive = currentTool === tool.id;
-            return (
-              <button
-                key={tool.id}
-                onClick={() => {
-                  onSelectTool(tool.id);
-                  setIsOpen(false);
-                }}
+          <div className="rounded-lg border border-sidebar-border bg-[var(--rf-panel-soft)] p-3">
+            <div className="flex items-center justify-between text-xs">
+              <span className="flex items-center gap-2 font-semibold text-foreground">
+                <CircuitBoard className="h-4 w-4 text-primary" />
+                <span className={cn(collapsed && 'hidden')}>Backend</span>
+              </span>
+              <span
                 className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors",
-                  isActive 
-                    ? "bg-primary/10 text-primary" 
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                  backendOnline ? 'bg-[var(--rf-success)]/15 text-[var(--rf-success)]' : 'bg-destructive/10 text-destructive'
                 )}
               >
-                <Icon className={cn("w-5 h-5", isActive ? "text-primary" : "text-muted-foreground")} />
-                {tool.name}
-              </button>
-            );
-          })}
-
-          {/* Sección Laboratorio */}
-          <div className="text-xs font-semibold text-muted-foreground mb-2 px-2 uppercase tracking-wider mt-6 pt-4 border-t border-border/50">
-            {t('laboratory')}
-          </div>
-          {labTools.map((tool) => {
-            const Icon = tool.icon;
-            const isActive = currentTool === tool.id;
-            return (
-              <button
-                key={tool.id}
-                onClick={() => {
-                  onSelectTool(tool.id);
-                  setIsOpen(false);
-                }}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors",
-                  isActive 
-                    ? "bg-primary/10 text-primary" 
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                )}
-              >
-                <Icon className={cn("w-5 h-5", isActive ? "text-primary" : "text-muted-foreground")} />
-                {tool.name}
-              </button>
-            );
-          })}
-
-          <div className="pt-4 mt-4 border-t border-border">
-            <button
-              onClick={() => {
-                onSelectTool('sobre');
-                setIsOpen(false);
-              }}
-              className={cn(
-                "w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors",
-                currentTool === 'sobre' 
-                  ? "bg-primary/10 text-primary" 
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-            >
-              <Info className={cn("w-5 h-5", currentTool === 'sobre' ? "text-primary" : "text-muted-foreground")} />
-              {t('about')}
-            </button>
+                {backendStatus === 'checking' ? 'checking' : backendOnline ? 'online' : 'offline'}
+              </span>
+            </div>
+            <div className={cn('mt-2 text-[11px] text-muted-foreground', collapsed && 'hidden')}>127.0.0.1:8080</div>
           </div>
         </div>
-
-        <div className="absolute bottom-4 left-0 right-0 px-6 text-xs text-muted-foreground text-center">
-            &copy; 2026 RF Tools Suite
-        </div>
-      </div>
+      </aside>
     </>
   );
 }

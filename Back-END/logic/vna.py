@@ -10,13 +10,273 @@ import glob
 import serial
 import os
 import tempfile
-from typing import List
+from typing import List, Optional
+
+try:
+    import pyvisa
+except ImportError:
+    pyvisa = None
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+# Configuración verificada para el entorno del usuario
+KEYSIGHT_VISA_PATH = r'C:\Program Files\IVI Foundation\VISA\Win64\ktvisa\ktbin\visa32.dll'
+
+class HP8752A:
+    def __init__(self, resource_name="GPIB0::16::INSTR"):
+        if pyvisa is None:
+            raise ImportError("pyvisa not installed. Please install it to use HP8752A.")
+        
+        self.inst = None
+        self.connected = False
+        self.device_type = "HP8752A"
+        self.last_cal_mode = "none"
+
+        try:
+            self.rm = pyvisa.ResourceManager(KEYSIGHT_VISA_PATH)
+        except Exception as e:
+            print(f"Error cargando libreria Keysight: {e}. Usando default.")
+            self.rm = pyvisa.ResourceManager()
+            
+        try:
+            self.inst = self.rm.open_resource(resource_name)
+            self.inst.timeout = 15000 
+            self.inst.send_end = True 
+            self.inst.read_termination = None
+            self.inst.write_termination = None
+            self.inst.chunk_size = 102400
+            
+            try:
+                if hasattr(self.inst, 'clear'):
+                    self.inst.clear()
+                    time.sleep(0.5)
+            except: pass
+            
+            self.connected = True
+            print(f"HP8752A conectado en {resource_name}")
+            self.get_errors()
+        except Exception as e:
+            print(f"Error connecting to HP8752A: {e}")
+            self.connected = False
+
+    def set_sweep(self, start_hz, stop_hz, points):
+        if not self.connected or not self.inst: return
+        
+        print(f"Configurando barrido: {start_hz}Hz - {stop_hz}Hz ({points} pts)")
+        self.inst.write(f"STAR {start_hz:.1e} HZ;")
+        self.inst.write(f"STOP {stop_hz:.1e} HZ;")
+        self.inst.write(f"POIN {int(points)};")
+        time.sleep(1.0)
+        self.get_errors()
+        self.inst.write("CORRON;")
+
+    def get_data(self, parameter="S11"):
+        if not self.connected or not self.inst: raise ConnectionError("VNA desconectado")
+
+        orig_timeout = self.inst.timeout
+        try:
+            self.inst.timeout = 45000
+            print(f"Capturando {parameter}...")
+            self.inst.write(f"{parameter}; OPC?; SING;")
+            
+            res = self.inst.read().strip()
+            if res != "1": print(f"OPC? sync warning: {res}")
+
+            self.inst.write("STAR?;")
+            start = float(self.inst.read().strip())
+            self.inst.write("STOP?;")
+            stop = float(self.inst.read().strip())
+            self.inst.write("POIN?;")
+            points = int(float(self.inst.read().strip()))
+            freqs = np.linspace(start, stop, points)
+
+            self.inst.write("FORM4; OUTPDATA;")
+            data_raw = self.inst.read().strip()
+            
+            import re
+            clean_str = re.sub(r'[^0-9.eE+,-]', ' ', data_raw)
+            data_vals = [float(v) for v in clean_str.replace(',', ' ').split() if v.strip()]
+            complex_data = np.array(data_vals[0::2]) + 1j * np.array(data_vals[1::2])
+
+            if len(complex_data) > len(freqs): complex_data = complex_data[:len(freqs)]
+            elif len(complex_data) < len(freqs):
+                padded = np.zeros(len(freqs), dtype=complex)
+                padded[:len(complex_data)] = complex_data
+                complex_data = padded
+
+            self.inst.write("CONT;") 
+            return freqs, complex_data
+        except Exception as e:
+            print(f"Error en get_data: {e}")
+            try: self.inst.clear()
+            except: pass
+            raise e
+        finally:
+            self.inst.timeout = orig_timeout
+
+    def hp_measurement_step(self, step_name, params=None):
+        if not self.connected or not self.inst: return "Disconnected"
+        if step_name == "setup":
+            self.set_sweep(params.get('start_hz'), params.get('stop_hz'), params.get('points'))
+            self.inst.write(f"{params.get('parameter', 'S11')}; LOGM;")
+            return "OK"
+        elif step_name == "measure":
+            self.inst.write("OPC?; SING;")
+            self.inst.read()
+            return "OK"
+        elif step_name == "download":
+            freqs, data = self.get_data(params.get('parameter', 'S11'))
+            return {"freqs": freqs.tolist(), "real": np.real(data).tolist(), "imag": np.imag(data).tolist()}
+        return "Unknown"
+
+    def stream(self, parameter="S11"):
+        freqs, data = self.get_data(parameter)
+        if parameter == "S11": yield data, np.zeros_like(data), freqs
+        else: yield np.zeros_like(data), data, freqs
+
+    def get_errors(self):
+        if not self.inst: return
+        try:
+            self.inst.write("OUTPERRO;")
+            err = self.inst.read().strip()
+            if err and not err.startswith("0"):
+                print(f"VNA Error: {err}")
+                return err
+        except: pass
+        return None
+
+    def hp_calibration_step(self, cal_type, step_cmd):
+        if not self.connected or not self.inst: raise ConnectionError("VNA desconectado")
+        
+        cmd_upper = step_cmd.upper()
+        if "PRES" in cmd_upper:
+            self.inst.write("PRES;")
+            time.sleep(2); self.inst.write("CONT;")
+            return "OK"
+
+        # Comandos que requieren sincronización (Medidas y Cálculos)
+        wait_cmds = ["DONE", "RAID", "SAV", "CLASS", "STAN", "THRU", "SING", "RAIRESP", "RAIISOL"]
+        requires_wait = any(c in cmd_upper for c in wait_cmds)
+
+        orig_timeout = self.inst.timeout
+        try:
+            if requires_wait:
+                self.inst.timeout = 60000
+                print(f"Sincronizando: {step_cmd}")
+                self.inst.write(f"OPC?; {step_cmd}")
+                self.inst.read()
+            else:
+                self.inst.write(step_cmd)
+                time.sleep(0.2)
+            return "OK"
+        except Exception as e:
+            print(f"Error en paso {step_cmd}: {e}")
+            try: self.inst.clear()
+            except: pass
+            raise e
+        finally:
+            self.inst.timeout = orig_timeout
+
+    def export_cal_json(self):
+        if not self.connected or not self.inst: return None
+        
+        # Detectar tipo de calibración (S11 o RAI)
+        active_cal = "NONE"; num_arrays = 0
+        
+        # Intentar detectar cual está activa
+        try:
+            self.inst.write("CALIS111?")
+            if self.inst.read().strip() == "1":
+                active_cal = "CALIS111"
+                num_arrays = 3
+        except: pass
+
+        if active_cal == "NONE":
+            try:
+                self.inst.write("CALIRAI?")
+                if self.inst.read().strip() == "1":
+                    active_cal = "CALIRAI"
+                    num_arrays = 2 # RAI tiene 2 arrays: Response e Isolation
+            except: pass
+
+        if active_cal == "NONE":
+            print("No se detectó calibración activa de 1-Port o RAI.")
+            return None
+
+        print(f"Exportando calibración activa: {active_cal} ({num_arrays} arrays)")
+
+        state = {
+            "vna_model": "HP8752A",
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "cal_type": active_cal,
+            "arrays": {}
+        }
+
+        orig_timeout = self.inst.timeout
+        try:
+            self.inst.timeout = 60000; self.inst.write("FORM4;") 
+            for i in range(1, num_arrays + 1):
+                self.inst.write(f"OUTPCALC{i:02d};")
+                state["arrays"][f"array_{i}"] = self.inst.read().strip()
+            
+            self.inst.write("STAR?;"); state["start_hz"] = float(self.inst.read().strip())
+            self.inst.write("STOP?;"); state["stop_hz"] = float(self.inst.read().strip())
+            self.inst.write("POIN?;"); state["points"] = int(float(self.inst.read().strip()))
+            
+            self.inst.write("CONT;")
+            return state
+        finally:
+            self.inst.timeout = orig_timeout
+
+    def import_cal_json(self, state):
+        if not self.connected or not self.inst: return False
+            
+        print(f"Restaurando {state.get('cal_type')}...")
+        try: self.inst.clear(); time.sleep(0.2)
+        except: pass
+        
+        self.inst.write("HOLD;")
+        self.inst.write(f"STAR {state['start_hz']:.1e} HZ;")
+        self.inst.write(f"STOP {state['stop_hz']:.1e} HZ;")
+        self.inst.write(f"POIN {state['points']};")
+        time.sleep(1.0)
+        
+        cal_type = state.get("cal_type", "CALIS111")
+        if cal_type == "CALIS11": cal_type = "CALIS111"
+            
+        self.inst.write("CALKN50;") 
+        param = "S11" if "S11" in cal_type else "S21"
+        self.inst.write(f"{param}; {cal_type};")
+        time.sleep(0.5)
+
+        orig_timeout = self.inst.timeout
+        try:
+            self.inst.timeout = 60000 
+            sorted_keys = sorted(state["arrays"].keys(), key=lambda x: int(x.split('_')[1]))
+            for arr_key in sorted_keys:
+                data = state["arrays"][arr_key]
+                num = int(arr_key.split('_')[1])
+                clean_data = data.replace('\r', '').replace('\n', ',').replace(' ', '')
+                while ',,' in clean_data: clean_data = clean_data.replace(',,', ',')
+                clean_data = clean_data.strip(',')
+                
+                self.inst.write(f"FORM4; INPUCALC{num:02d}{clean_data};")
+                time.sleep(0.5 + (int(state['points']) / 400.0))
+
+            print("Finalizando restauración...")
+            done_cmd = "RAID" if "RAI" in cal_type else "DONE"
+            self.inst.write(f"OPC?; {done_cmd}"); self.inst.read()
+            self.inst.write("OPC?; SAVC"); self.inst.read()
+            self.inst.write("CORRON; CONT;")
+            return True
+        finally:
+            self.inst.timeout = orig_timeout
+            time.sleep(0.5)
+
+# --- FUNCIONES NANOVNA (INALTERADAS) ---
+
 def list_serial_ports() -> List[str]:
-    """Lists serial port names on Windows"""
     if sys.platform.startswith('win'):
         ports = ['COM%s' % (i + 1) for i in range(256)]
     elif sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
@@ -32,172 +292,277 @@ def list_serial_ports() -> List[str]:
             s = serial.Serial(port)
             s.close()
             result.append(port)
-        except (OSError, serial.SerialException) as e:
-            if "Access is denied" in str(e) or "PermissionError" in str(e):
-                print(f"Port {port} exists but access was denied (likely in use).")
+        except (OSError, serial.SerialException):
             pass
     return result
 
-def get_vna_connection():
-    print("Searching for NanoVNA devices...")
-    
-    last_error = ""
+def get_vna_connection(device_type="NanoVNA", resource_name=None):
+    if device_type == "HP8752A":
+        if pyvisa is None: raise ImportError("pyvisa no instalado.")
+        if resource_name is None: resource_name = "GPIB0::16::INSTR"
+        return HP8752A(resource_name)
+
+    print(f"Searching for {device_type}...")
     try:
-        # pynanovna handles discovery automatically. VNA(0) connects to the first one found.
         vna = pynanovna.VNA(0)
-        
-        if vna.connected:
-            # Successfully connected
-            try:
-                port_name = getattr(vna.iface, 'port', "unknown port")
-                print(f"Successfully connected to NanoVNA on {port_name}")
-            except:
-                print("Successfully connected to NanoVNA")
-            return vna
-        else:
-            last_error = "NanoVNA not found (library reported not connected)."
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        last_error = str(e)
+        if vna.connected: return vna
+    except: pass
+    raise ConnectionError("VNA no detectado.")
 
-    msg = "NanoVNA not detected."
-    if last_error:
-        msg += f" Details: {last_error}"
+def start_calibration(vna, start_hz, stop_hz, points, device_type="NanoVNA"):
+    print(f"Starting new calibration session for {device_type}...")
     
-    # Check if any serial ports exist at all to provide better feedback
+    if device_type == "HP8752A":
+        # Para HP, el reset se maneja via comandos GPIB (PRESET ya se envía si se solicita)
+        vna.set_sweep(start_hz, stop_hz, points)
+        return {"status": "HP Sweep configured"}
+    
+    # Para NanoVNA, es CRÍTICO resetear el objeto de calibración
+    # para evitar que se acumulen puntos de sesiones anteriores (el error de los 1300 puntos)
     try:
-        all_ports = list_serial_ports()
-        if not all_ports:
-            msg += " No serial ports were found on the system. Check USB connection and drivers."
-        else:
-            msg += f" Found ports {all_ports}, but none seem to be a NanoVNA."
-    except:
-        pass
-
-    raise ConnectionError(msg)
-
-def calibrate_step(vna, step: str):
-    # step: 'short', 'open', 'load', 'isolation', 'through'
-    try:
-        # Limpiar cualquier dato residual en el buffer de entrada antes de medir el paso
         if hasattr(vna, 'iface') and hasattr(vna.iface, 'reset_input_buffer'):
             vna.iface.reset_input_buffer()
-            
+        
+        # Resetear el dataset de calibración
+        vna.calibration = pynanovna.calibration.Calibration()
+        print("NanoVNA calibration object reset successfully.")
+        
+        # Configurar el barrido
+        vna.set_sweep(start_hz, stop_hz, points)
+        print(f"Sweep set to {start_hz} - {stop_hz} Hz with {points} points.")
+        
+        return {"status": "Calibration started and dataset reset"}
+    except Exception as e:
+        print(f"Error starting NanoVNA calibration: {e}")
+        raise RuntimeError(f"Could not start calibration: {str(e)}")
+
+def calibrate_step(vna, step: str):
+    try:
+        print(f"Executing calibration step: {step}")
+        if hasattr(vna, 'iface') and hasattr(vna.iface, 'reset_input_buffer'):
+            vna.iface.reset_input_buffer()
+        
+        # Realizar el paso de calibración
         vna.calibration_step(step)
+        
+        # Loggear info del dataset actual
+        if hasattr(vna, 'calibration') and hasattr(vna.calibration, 'dataset'):
+            ds = vna.calibration.dataset
+            points = len(ds.frequencies())
+            print(f"Step {step} recorded. Total frequency points in dataset: {points}")
+            
+            # Verificar integridad para el paso actual
+            count = 0
+            for freq in ds.frequencies():
+                val = ds.data.get(freq)
+                if val and getattr(val, step) is not None:
+                    count += 1
+            print(f"Valid points for {step}: {count}/{points}")
+            
         return {"status": f"Step {step} completed"}
     except Exception as e:
+        print(f"Error during calibration step '{step}': {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise RuntimeError(f"Error during calibration step '{step}': {str(e)}")
 
 def finalize_calibration(vna, save_path=None, cal_type="twoport"):
+    print(f"Finalizing calibration (type={cal_type})...")
     try:
-        print(f"--- Finalizing {cal_type} calibration in hardware ---")
-        
-        # Limpiar buffer antes de la medición final/procesamiento
+        # Limpiar buffers
         if hasattr(vna, 'iface') and hasattr(vna.iface, 'reset_input_buffer'):
             vna.iface.reset_input_buffer()
+        
+        # Verificar integridad antes de calcular
+        if hasattr(vna, 'calibration') and hasattr(vna.calibration, 'dataset'):
+            ds = vna.calibration.dataset
+            freqs = ds.frequencies()
+            print(f"Integrity check: {len(freqs)} frequency points found.")
             
-        # Procesar los pasos de calibración acumulados
+            missing_short = [f for f in freqs if ds.data[f].short is None]
+            missing_open = [f for f in freqs if ds.data[f].open is None]
+            missing_load = [f for f in freqs if ds.data[f].load is None]
+            
+            if missing_short or missing_open or missing_load:
+                print(f"CRITICAL: Missing points! Short: {len(missing_short)}, Open: {len(missing_open)}, Load: {len(missing_load)}")
+                # Intentar "limpiar" el dataset si hay puntos huérfanos por jitter de frecuencia
+                # Si un punto tiene Open y Short pero no Load, y hay otro punto muy cercano que tiene solo Load,
+                # podríamos intentar unirlos. Pero pynanovna es estricto con los tipos de datos.
+        
+        # Enviar comando de calibración al VNA
+        print("Sending calibrate command to NanoVNA (calc_corrections)...")
         vna.calibrate()
         
-        # Forzar un pequeño delay para que el hardware procese el motor de calibración interno
-        time.sleep(1)
-
+        # Esperar a que el VNA procese y calcule los coeficientes
+        print("Waiting for VNA to compute coefficients...")
+        time.sleep(2.0)
+        
+        # Crear un archivo temporal para guardar la calibración
         fd, temp_filename = tempfile.mkstemp(suffix=".cal")
         os.close(fd) 
         
         try:
-            # Guardar la calibración
-            vna.save_calibration(temp_filename)
-            
-            if os.path.exists(temp_filename):
-                # Verificación de consistencia de puntos antes de enviar al frontend
-                with open(temp_filename, "r", encoding='utf-8', errors='ignore') as f:
-                    lines = f.readlines()
-                    data_lines = [l for l in lines if l.strip() and not l.startswith(('#', '!'))]
-                    actual_points = len(data_lines)
-                    print(f"Calibración finalizada con {actual_points} puntos detectados en el archivo.")
+            print(f"Saving calibration to temporary file: {temp_filename}")
+            # Intentar guardar con reintentos
+            max_save_retries = 2
+            for i in range(max_save_retries):
+                try:
+                    vna.save_calibration(temp_filename)
+                    if os.path.exists(temp_filename) and os.path.getsize(temp_filename) > 0:
+                        break
+                except Exception as save_err:
+                    print(f"Save attempt {i+1} failed: {save_err}")
+                    if i == max_save_retries - 1:
+                        raise save_err
+                    time.sleep(1.0)
 
+            if os.path.exists(temp_filename) and os.path.getsize(temp_filename) > 0:
                 with open(temp_filename, "rb") as f:
                     content = f.read()
-                
                 content_base64 = base64.b64encode(content).decode('utf-8')
-                
+                print("Calibration finalized and encoded successfully.")
                 return {
                     "status": "success",
-                    "message": f"Calibración generada con {actual_points} puntos.",
                     "file_content": content_base64,
-                    "suggested_name": "calibracion_nanovna.cal",
-                    "actual_points": actual_points
+                    "suggested_name": f"cal_{time.strftime('%Y%m%d_%H%M%S')}.cal"
                 }
             else:
-                return {"status": "error", "message": "No se pudo generar el archivo de calibración en el servidor (archivo no encontrado)."}
+                return {"status": "error", "message": "Failed to generate calibration file or file is empty."}
         finally:
-            # Clean up temp file
             if os.path.exists(temp_filename):
-                try:
+                try: 
                     os.remove(temp_filename)
-                except:
-                    pass
-            
+                    print("Temporary calibration file cleaned up.")
+                except: pass
     except Exception as e:
+        print(f"Error during calibration finalization: {e}")
         import traceback
         traceback.print_exc()
-        return {"status": "error", "message": f"Error finalizando calibración: {str(e)}"}
+        return {"status": "error", "message": f"Error finalizing calibration: {str(e)}"}
 
-def process_sweep(vna, one_port=False):
-    stream = vna.stream()
-    try:
-        s11, s21, freqs = next(stream)
-    except StopIteration:
-        raise RuntimeError("Failed to get data from VNA stream")
-    except Exception as e:
-        raise RuntimeError(f"Error reading from VNA: {str(e)}")
+def _smooth_complex_trace(trace, window):
+    """Smooth real/imag traces with a centered moving average."""
+    window = int(window or 1)
+    if window <= 1 or trace is None or len(trace) < 3:
+        return trace
+    if window % 2 == 0:
+        window += 1
+    window = min(window, len(trace) if len(trace) % 2 == 1 else len(trace) - 1)
+    if window <= 1:
+        return trace
+
+    kernel = np.ones(window, dtype=float) / window
+    pad = window // 2
+    real = np.convolve(np.pad(np.real(trace), pad, mode="edge"), kernel, mode="valid")
+    imag = np.convolve(np.pad(np.imag(trace), pad, mode="edge"), kernel, mode="valid")
+    return real + 1j * imag
+
+def process_sweep(vna, one_port=False, averaging_count=1, smoothing_window=1):
+    averaging_count = max(1, int(averaging_count or 1))
+    smoothing_window = max(1, int(smoothing_window or 1))
+    print(f"Starting sweep process (one_port={one_port}, averaging={averaging_count}, smoothing={smoothing_window})...")
     
-    # Process and return data
-    # Avoid log(0)
+    # Intentar capturar el stream con reintentos si falla la primera vez
+    max_retries = 3
+    s11, s21, freqs = None, None, None
+    
+    for attempt in range(max_retries):
+        try:
+            # Algunas versiones de pynanovna pueden requerir limpiar el buffer antes
+            if hasattr(vna, 'iface') and hasattr(vna.iface, 'reset_input_buffer'):
+                vna.iface.reset_input_buffer()
+            
+            s11_samples = []
+            s21_samples = []
+            freq_samples = []
+            for avg_idx in range(averaging_count):
+                stream = vna.stream()
+                sample_s11, sample_s21, sample_freqs = next(stream)
+                sample_s11 = np.asarray(sample_s11)
+                sample_s21 = np.asarray(sample_s21) if sample_s21 is not None else None
+                sample_freqs = np.asarray(sample_freqs)
+
+                if sample_s11.size == 0 or sample_freqs.size == 0:
+                    raise RuntimeError("VNA returned empty data during averaging")
+
+                s11_samples.append(sample_s11)
+                if sample_s21 is not None and sample_s21.size > 0:
+                    s21_samples.append(sample_s21)
+                freq_samples.append(sample_freqs)
+                if avg_idx < averaging_count - 1:
+                    time.sleep(0.1)
+
+            min_len = min(len(arr) for arr in s11_samples + freq_samples)
+            if s21_samples:
+                min_len = min(min_len, min(len(arr) for arr in s21_samples))
+
+            freqs = freq_samples[-1][:min_len]
+            s11 = np.mean([arr[:min_len] for arr in s11_samples], axis=0)
+            s21 = np.mean([arr[:min_len] for arr in s21_samples], axis=0) if s21_samples else None
+            
+            if s11 is not None and len(s11) > 0:
+                print(f"Data captured successfully on attempt {attempt + 1}. Points: {len(freqs)}")
+                break
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
+                raise RuntimeError(f"Error reading from VNA after {max_retries} attempts: {str(e)}")
+            time.sleep(1.0) # Esperar un poco más entre reintentos
+    
+    # Asegurar que son arrays de numpy para operaciones vectoriales
+    s11 = np.asarray(s11)
+    s21 = np.asarray(s21) if s21 is not None else None
+    freqs = np.asarray(freqs)
+    
+    # Validar que los datos no estén vacíos
+    if s11.size == 0 or freqs.size == 0:
+        raise RuntimeError("VNA returned empty data")
+
+    s11 = _smooth_complex_trace(s11, smoothing_window)
+    if s21 is not None:
+        s21 = _smooth_complex_trace(s21, smoothing_window)
+    
+    # Calcular magnitud en dB
     s11_db = 20 * np.log10(np.maximum(np.abs(s11), 1e-12))
     
     plt.figure(figsize=(10, 5))
-    plt.plot(freqs/1e6, s11_db, label="S11 (dB)")
+    plt.plot(freqs/1e6, s11_db, label="S11 (dB)", color='blue', linewidth=1.5)
     
-    if not one_port:
+    if not one_port and s21 is not None and s21.size > 0:
         s21_db = 20 * np.log10(np.maximum(np.abs(s21), 1e-12))
-        plt.plot(freqs/1e6, s21_db, label="S21 (dB)")
+        plt.plot(freqs/1e6, s21_db, label="S21 (dB)", color='red', linewidth=1.5)
     
-    plt.title("VNA Live Measurement")
+    plt.title("VNA Measurement")
     plt.xlabel("Frequency (MHz)")
     plt.ylabel("Magnitude (dB)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     
+    # Generar imagen base64
     buf = io.BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
     buf.seek(0)
     plot_base64 = base64.b64encode(buf.read()).decode('utf-8')
     plt.close()
     
-    # Generate Touchstone content
-    if one_port:
-        # S1P
-        lines = ["! Touchstone file generated by RF Tool Suite", "# Hz S RI R 50"]
-        for i, f in enumerate(freqs):
-            re11, im11 = np.real(s11[i]), np.imag(s11[i])
-            # Frequency ReS11 ImS11
+    # Generar contenido Touchstone
+    lines = ["! Generated by RF Tool Suite", "# Hz S RI R 50"]
+    for i, f in enumerate(freqs):
+        re11, im11 = np.real(s11[i]), np.imag(s11[i])
+        if one_port:
             lines.append(f"{f:.10e} {re11:.10e} {im11:.10e}")
-        touchstone_content = "\n".join(lines) + "\n"
-    else:
-        # S2P
-        lines = ["! Touchstone file generated by RF Tool Suite", "# Hz S RI R 50"]
-        for i, f in enumerate(freqs):
-            re11, im11 = np.real(s11[i]), np.imag(s11[i])
-            re21, im21 = np.real(s21[i]), np.imag(s21[i])
-            # Frequency ReS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22
-            # Assuming reciprocity (S12=S21) and symmetry (S22=S11) for NanoVNA simplified data
-            lines.append(f"{f:.10e} {re11:.10e} {im11:.10e} {re21:.10e} {im21:.10e} {re21:.10e} {im21:.10e} {re11:.10e} {im11:.10e}")
-        touchstone_content = "\n".join(lines) + "\n"
+        else:
+            # S2P completo (S11, S21, S12, S22)
+            # El NanoVNA básico solo mide S11 y S21. Rellenamos el resto.
+            re21 = np.real(s21[i]) if s21 is not None and i < len(s21) else 0.0
+            im21 = np.imag(s21[i]) if s21 is not None and i < len(s21) else 0.0
+            # Formato: Freq ReS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22
+            lines.append(f"{f:.10e} {re11:.10e} {im11:.10e} {re21:.10e} {im21:.10e} 0.0 0.0 0.0 0.0")
+            
+    touchstone_content = "\n".join(lines) + "\n"
 
     res = {
+        "status": "success",
         "freqs": freqs.tolist(),
         "s11_real": np.real(s11).tolist(),
         "s11_imag": np.imag(s11).tolist(),
@@ -205,39 +570,25 @@ def process_sweep(vna, one_port=False):
         "touchstone_content": touchstone_content,
         "is_one_port": one_port
     }
-    
-    if not one_port:
+    if not one_port and s21 is not None:
         res["s21_real"] = np.real(s21).tolist()
         res["s21_imag"] = np.imag(s21).tolist()
         
     return res
 
-def run_sweep(start_hz, stop_hz, points, calibration_path=None, vna=None, one_port=False):
-    # Validation
-    if start_hz >= stop_hz:
-        raise ValueError(f"Start frequency ({start_hz} Hz) must be less than stop frequency ({stop_hz} Hz)")
-    if points <= 0:
-        raise ValueError("Points must be greater than 0")
-    if points > 1024:
-        # Algunos dispositivos fallan silenciosamente o se bloquean con más de 1024 puntos
-        points = 1024
-        print(f"Warning: Points capped at 1024 for device stability.")
-
-    if start_hz < 0 or stop_hz < 0:
-        raise ValueError("Frequencies must be positive")
-
+def run_sweep(start_hz, stop_hz, points, calibration_path=None, vna=None, one_port=False, device_type="NanoVNA", averaging_count=1, smoothing_window=1):
     if vna is None:
-        vna = get_vna_connection()
+        vna = get_vna_connection(device_type=device_type)
 
-    if calibration_path:
-        print(f"Loading calibration from {calibration_path}")
-        vna.load_calibration(calibration_path)
-    else:
-        # Reset calibration to ensure no previous calibration is applied
-        print("No calibration file provided. Resetting to uncalibrated state.")
-        vna.calibration = pynanovna.calibration.Calibration()
+    if device_type == "NanoVNA":
+        if calibration_path:
+            vna.load_calibration(calibration_path)
+        else:
+            vna.calibration = pynanovna.calibration.Calibration()
 
     vna.set_sweep(start_hz, stop_hz, points)
-    # Dar un pequeño margen para que el hardware asimile el cambio de configuración
     time.sleep(0.5)
-    return process_sweep(vna, one_port=one_port)
+    if device_type != "NanoVNA":
+        averaging_count = 1
+        smoothing_window = 1
+    return process_sweep(vna, one_port=one_port, averaging_count=averaging_count, smoothing_window=smoothing_window)

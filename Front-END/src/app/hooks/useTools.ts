@@ -8,7 +8,8 @@ import {
   FlaskConical,
   Zap,
   Ruler,
-  Library
+  Library,
+  FileSearch
 } from 'lucide-react';
 import { useLanguage } from '../lib/i18n';
 
@@ -56,10 +57,22 @@ export function useTools() {
 
   const labTools = useMemo(() => [
     {
+      id: 'quick-extract',
+      name: 'Extractor Rápido C/L',
+      description: 'Extracción inmediata de C/L y SRF por promediado de pendiente.',
+      icon: Zap,
+    },
+    {
       id: 'cutoff-freq',
       name: 'Frecuencia de Corte',
       description: 'Calcula la frecuencia de corte por mínima impedancia.',
       icon: Zap,
+    },
+    {
+      id: 'correction',
+      name: 'Corrección Offline',
+      description: 'Aplica corrección S-parameter utilizando coeficientes de error externos.',
+      icon: FlaskConical,
     },
     {
       id: 'tline-calc',
@@ -72,6 +85,12 @@ export function useTools() {
       name: t('cable_impedance'),
       description: t('desc.cable_impedance'),
       icon: Zap,
+    },
+    {
+      id: 'datasheets',
+      name: 'Datasheets',
+      description: 'Busca hojas de datos y fíjalas a componentes medidos.',
+      icon: FileSearch,
     },
   ], [t]);
 

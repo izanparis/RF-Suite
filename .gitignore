@@ -30,6 +30,7 @@ yarn-error.log*
 pnpm-debug.log*
 Front-END/dist/
 Front-END/dist-ssr/
+Front-END/release/
 *.local
 .env
 .env.local
@@ -47,3 +48,10 @@ Thumbs.db
 
 # --- Gemini / Local ---
 .gemini/
+
+# --- Custom Exclusions ---
+Documentación/
+notebooks/
+Biblioteca/**
+!Biblioteca/**/
+!Biblioteca/**/.gitkeep

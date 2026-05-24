@@ -101,6 +101,29 @@ export function CompactModelTool() {
 
         const data = await response.json();
         setResult(data);
+
+        // Auto-save analysis results to server
+        if (selectedMeas) {
+          const matched = measurements.find((m: any) => m.name === selectedMeas) as any;
+          const relativePath = matched?.relative_path || selectedMeas;
+          fetch('http://localhost:8080/api/library/measurement/analysis', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              measurement_relative_path: relativePath,
+              tool_name: 'compact_model',
+              results: {
+                summary: {
+                  method: data.summary.method || method,
+                  c_eff: data.summary.c_eff,
+                  nrms: data.summary.nrms
+                },
+                spice_netlist: data.spice_netlist,
+                plots: data.plots.map((p: any) => ({ id: p.id, title: p.title, image: p.image }))
+              }
+            })
+          }).catch(err => console.error("Error auto-saving compact model analysis:", err));
+        }
       } catch (error) {
         console.error(error);
         alert('Error: ' + (error instanceof Error ? error.message : String(error)));

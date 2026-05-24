@@ -17,13 +17,13 @@ interface ToolShellProps {
 
 export function ToolShell({ title, description, actions = [], onAction, children }: ToolShellProps) {
   return (
-    <div className="max-w-4xl mx-auto p-6 md:p-10 space-y-6">
-      <div className="space-y-3">
-        <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight">{title}</h2>
-        <p className="text-muted-foreground text-base md:text-lg max-w-2xl">{description}</p>
+    <div className="max-w-5xl mx-auto p-6 md:p-8 space-y-6">
+      <div className="rounded-lg border border-border bg-[var(--rf-panel)] p-6 shadow-sm">
+        <h2 className="text-2xl font-extrabold tracking-tight">{title}</h2>
+        <p className="mt-2 text-muted-foreground text-base max-w-3xl">{description}</p>
 
         {actions.length > 0 && (
-          <div className="flex flex-wrap gap-2 pt-2">
+          <div className="flex flex-wrap gap-2 pt-4">
             {actions.map((a) => (
               <Button
                 key={a.id}

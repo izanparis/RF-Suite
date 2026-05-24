@@ -1,19 +1,19 @@
 import React from 'react';
-import { Moon, Sun, Languages } from 'lucide-react';
-import { useTheme } from 'next-themes';
+import { Moon, Sun } from 'lucide-react';
 import { Button } from './ui/button';
 import { useLanguage } from '../lib/i18n';
+import { useTheme } from '../lib/theme';
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
   const { language, setLanguage } = useLanguage();
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+    <div className="fixed bottom-6 right-6 z-50 flex gap-2 rounded-lg border border-border bg-[var(--rf-topbar)] p-1.5 shadow-lg backdrop-blur-xl">
       <Button
         variant="outline"
         size="icon"
-        className="rounded-full shadow-lg bg-card hover:bg-muted border-border"
+        className="h-9 w-9 rounded-md border-border bg-card shadow-none hover:bg-muted"
         onClick={() => setLanguage(language === 'es' ? 'en' : 'es')}
         title={language === 'es' ? 'Switch to English' : 'Cambiar a Español'}
       >
@@ -24,7 +24,7 @@ export function ThemeToggle() {
       <Button
         variant="outline"
         size="icon"
-        className="rounded-full shadow-lg bg-card hover:bg-muted border-border"
+        className="h-9 w-9 rounded-md border-border bg-card shadow-none hover:bg-muted"
         onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
       >
         <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
