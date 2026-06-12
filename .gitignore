@@ -38,6 +38,12 @@ Front-END/release/
 .env.test.local
 .env.production.local
 
+# --- Next.js ---
+.next/
+Front-END/.next/
+next-env.d.ts
+Front-END/next-env.d.ts
+
 # --- IDEs / Editors ---
 .vscode/
 .idea/

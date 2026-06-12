@@ -191,7 +191,7 @@ def _css() -> str:
         background-color: #f8fafc;
         border-left: 4px solid #0f52ba;
         padding: 20px 24px;
-        margin-bottom: 45px;
+        margin-bottom: 40px;
         font-size: 14.5px;
         line-height: 1.7;
         color: #334155;
@@ -205,6 +205,98 @@ def _css() -> str:
         font-size: 15px;
     }
     
+    /* Table of Contents (Index) Styles */
+    .toc-container {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 24px 30px;
+        margin-bottom: 40px;
+        page-break-inside: avoid;
+    }
+    .toc-title {
+        font-family: 'Lora', Georgia, serif;
+        font-size: 16px;
+        font-weight: 700;
+        color: #0f52ba;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        border-bottom: 2px solid #cbd5e1;
+        padding-bottom: 8px;
+        margin-bottom: 16px;
+    }
+    .toc-grid {
+        display: grid;
+        grid-template-columns: 1.25fr 1fr;
+        gap: 30px;
+    }
+    @media (max-width: 768px) {
+        .toc-grid {
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+    }
+    .toc-column {
+        min-width: 0;
+    }
+    .toc-column-title {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #64748b;
+        letter-spacing: 0.5px;
+        margin-bottom: 12px;
+        border-bottom: 1px solid #e2e8f0;
+        padding-bottom: 4px;
+    }
+    .toc-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    .toc-item {
+        margin-bottom: 8px;
+        font-size: 13.5px;
+        line-height: 1.4;
+    }
+    .toc-item a {
+        color: #1e293b;
+        text-decoration: none;
+        font-weight: 500;
+        transition: color 0.15s;
+    }
+    .toc-item a:hover {
+        color: #0f52ba;
+        text-decoration: underline;
+    }
+    .toc-subitem {
+        margin-left: 16px;
+        font-size: 12px;
+        margin-top: 4px;
+    }
+    .toc-subitem a {
+        color: #475569;
+    }
+    
+    /* Return back-to-toc button */
+    .back-to-toc {
+        font-size: 11px;
+        color: #64748b;
+        text-decoration: none;
+        margin-left: auto;
+        font-weight: 500;
+        text-transform: none;
+        letter-spacing: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        transition: color 0.15s;
+    }
+    .back-to-toc:hover {
+        color: #0f52ba;
+        text-decoration: underline;
+    }
+
     /* IEEE Sections */
     .section-container {
         margin-bottom: 45px;
@@ -246,13 +338,14 @@ def _css() -> str:
         margin: 25px 0;
     }
     .table-caption {
-        text-align: center;
         font-size: 11px;
         font-weight: 700;
         text-transform: uppercase;
         color: #475569;
         margin-bottom: 12px;
         letter-spacing: 1px;
+        display: flex;
+        align-items: baseline;
     }
     .data-table {
         width: 100%;
@@ -294,20 +387,20 @@ def _css() -> str:
     }
     .figure-img-wrapper {
         display: inline-block;
-        padding: 12px;
+        padding: 16px;
         border: 1px solid #e2e8f0;
         background-color: #ffffff;
-        border-radius: 6px;
+        border-radius: 8px;
         max-width: 100%;
         box-sizing: border-box;
-        box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.03);
+        box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
     }
     .figure-img {
         max-width: 100%;
         height: auto;
         display: block;
-        max-height: 420px;
-        border-radius: 4px;
+        max-height: 550px;
+        border-radius: 6px;
     }
     .figure-caption {
         font-size: 12px;
@@ -316,6 +409,7 @@ def _css() -> str:
         margin-top: 12px;
         padding: 0 24px;
         line-height: 1.5;
+        text-align: center;
     }
     .figure-number {
         font-weight: 700;
@@ -446,8 +540,8 @@ def _css() -> str:
     }
     """
 
-def _render_section(title: str, number: str, content: str) -> str:
-    """Renders a standard IEEE section block."""
+def _render_section(title: str, number: str, section_id: str, content: str) -> str:
+    """Renders a standard IEEE section block with a back-to-index anchor link."""
     parts = content.split('\n', 1)
     if len(parts) == 2 and not parts[0].strip().startswith('<'):
         desc = f'<div class="section-desc">{parts[0].strip()}</div>'
@@ -457,10 +551,11 @@ def _render_section(title: str, number: str, content: str) -> str:
         body = content
         
     return f"""
-    <div class="section-container">
+    <div class="section-container" id="{section_id}">
         <h2 class="section-header">
             <span class="section-num">{number}.</span>
             <span class="section-text-inner">{title}</span>
+            <a href="#table-of-contents" class="back-to-toc no-print">↑ Table of Contents</a>
         </h2>
         {desc}
         {body}
@@ -468,7 +563,7 @@ def _render_section(title: str, number: str, content: str) -> str:
     """
 
 def _render_table(caption: str, table_id: str, headers: list, rows: list) -> str:
-    """Renders an IEEE standard data table with caption above."""
+    """Renders an IEEE standard data table with caption above and an anchor id."""
     header_html = "".join([f"<th>{h}</th>" for h in headers])
     rows_html = ""
     for r in rows:
@@ -476,8 +571,8 @@ def _render_table(caption: str, table_id: str, headers: list, rows: list) -> str
         rows_html += f"<tr>{row_cells}</tr>"
         
     return f"""
-    <div class="table-container" style="page-break-inside: avoid; margin-bottom: 20px;">
-        <div class="table-caption" id="{table_id}">Table {table_id}. {caption}</div>
+    <div class="table-container" id="table-{table_id.lower().replace('.', '-')}" style="page-break-inside: avoid; margin-bottom: 20px;">
+        <div class="table-caption">Table {table_id}. {caption} <a href="#table-of-contents" class="back-to-toc no-print" style="margin-left: auto;">↑ TOC</a></div>
         <table class="data-table">
             <thead>
                 <tr>{header_html}</tr>
@@ -490,18 +585,19 @@ def _render_table(caption: str, table_id: str, headers: list, rows: list) -> str
     """
 
 def _render_figure(base64_img: str, caption: str, fig_num: int) -> str:
-    """Renders a figure with base64 embedded image and caption below."""
+    """Renders a figure with base64 embedded image, caption below, and an anchor id."""
     if not base64_img:
         return ""
     # Ensure it has correct prefix
     img_src = base64_img if base64_img.startswith("data:image/") else f"data:image/png;base64,{base64_img}"
     return f"""
-    <div class="figure-container">
+    <div class="figure-container" id="fig-{fig_num}">
         <div class="figure-img-wrapper">
             <img class="figure-img" src="{img_src}" alt="Figure {fig_num}" />
         </div>
         <div class="figure-caption">
             <span class="figure-number">Fig. {fig_num}.</span> {caption}
+            <a href="#table-of-contents" class="back-to-toc no-print" style="display: inline-block; margin-left: 10px;">↑ TOC</a>
         </div>
     </div>
     """
@@ -538,7 +634,7 @@ def _generate_s_params_plots(touchstone_path: str) -> list:
             return b64
 
         # 1. S11 Magnitude
-        fig = plt.figure(figsize=(7, 4.5))
+        fig = plt.figure(figsize=(8.5, 5.2))
         plt.plot(freq_mhz, ntw.s_db[:, 0, 0], label='S11 (dB)', color='#0877c9', linewidth=1.5)
         plt.title('S11 Magnitude Response')
         plt.xlabel('Frequency (MHz)')
@@ -549,7 +645,7 @@ def _generate_s_params_plots(touchstone_path: str) -> list:
 
         # 2. S21 Magnitude (if 2 ports)
         if has_s21:
-            fig = plt.figure(figsize=(7, 4.5))
+            fig = plt.figure(figsize=(8.5, 5.2))
             plt.plot(freq_mhz, ntw.s_db[:, 1, 0], label='S21 (dB)', color='#ef4444', linewidth=1.5)
             plt.title('S21 Magnitude Response')
             plt.xlabel('Frequency (MHz)')
@@ -559,7 +655,7 @@ def _generate_s_params_plots(touchstone_path: str) -> list:
             plots.append({"id": "s21", "title": "S21 (dB)", "image": get_b64(fig)})
 
         # 3. Z Magnitude
-        fig = plt.figure(figsize=(7, 4.5))
+        fig = plt.figure(figsize=(8.5, 5.2))
         if n_ports == 1:
             z_in = np.abs(ntw.z[:, 0, 0])
             plt.loglog(freq_mhz, z_in, color='purple', label='|Z_in|', linewidth=1.5)
@@ -579,7 +675,7 @@ def _generate_s_params_plots(touchstone_path: str) -> list:
         plots.append({"id": "zmag", "title": "Impedance |Z|", "image": get_b64(fig)})
 
         # 4. Phase
-        fig = plt.figure(figsize=(7, 4.5))
+        fig = plt.figure(figsize=(8.5, 5.2))
         plt.plot(freq_mhz, ntw.s_deg[:, 0, 0], label='S11 Phase (°)', color='#0877c9', linewidth=1.5)
         if has_s21:
             plt.plot(freq_mhz, ntw.s_deg[:, 1, 0], label='S21 Phase (°)', color='#ef4444', linewidth=1.5)
@@ -591,7 +687,7 @@ def _generate_s_params_plots(touchstone_path: str) -> list:
         plots.append({"id": "phase", "title": "Phase (degrees)", "image": get_b64(fig)})
 
         # 5. Smith S11
-        fig = plt.figure(figsize=(6, 6))
+        fig = plt.figure(figsize=(7.5, 7.5))
         ntw.plot_s_smith(m=0, n=0, label='S11', color='#0877c9')
         plt.title('Smith Chart S11')
         plots.append({"id": "smith11", "title": "Smith S11", "image": get_b64(fig)})
@@ -686,6 +782,11 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
     fig_counter = 1
     table_counter = 1
     
+    # TOC Lists for dynamic collection
+    toc_sections = []
+    toc_tables = []
+    toc_figures = []
+    
     sections_html = ""
     
     # --- Section I: Component Identification ---
@@ -712,15 +813,18 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         
     table_i_html = _render_table(
         caption="Component Identification and Specifications Registered in the System",
-        table_id=f"I",
+        table_id="I",
         headers=["Parameter / Specification Field", "Registered Value"],
         rows=section_i_rows
     )
     sections_html += _render_section(
         title="Component Identification",
         number="I",
+        section_id="sec-i",
         content="This section details the mechanical, thermodynamic, and nominal electrical specifications of the Device Under Test (DUT) as registered in the RF Tool Suite Library database.\n" + table_i_html
     )
+    toc_sections.append(("I. Component Identification", "#sec-i"))
+    toc_tables.append(("Table I. Component Identification Specifications", "#table-i"))
     table_counter += 1
     
     # --- Section II: Measurement Setup ---
@@ -743,20 +847,24 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
     ]
     table_ii_html = _render_table(
         caption="Vector Network Analyzer (VNA) Calibration and Sweep Parameters",
-        table_id=f"II",
+        table_id="II",
         headers=["Setup Parameter", "Registered Setting / Value"],
         rows=setup_rows
     )
     sections_html += _render_section(
         title="Experimental Measurement Setup",
         number="II",
+        section_id="sec-ii",
         content="Characterization was conducted using vector network analysis with standard calibration. System parameters and environmental sweep conditions are tabulated below.\n" + table_ii_html
     )
+    toc_sections.append(("II. Experimental Measurement Setup", "#sec-ii"))
+    toc_tables.append(("Table II. VNA Calibration and Sweep Parameters", "#table-ii"))
     table_counter += 1
     
     # --- Section III: S-Parameter Analysis ---
     s_params_data = history.get("s_params", {})
     if s_params_data or touchstone_path:
+        toc_sections.append(("III. Scattering Parameter Frequency Response", "#sec-iii"))
         s_content = "The high-frequency behavior of the DUT is evaluated using its scattering parameters (S-parameters). Specifically, the magnitude and phase of the reflection coefficient (S11) and transmission coefficient (S21) are studied.\n"
         
         # S-parameter summary table
@@ -778,11 +886,12 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         
         table_iii_html = _render_table(
             caption="Key Scattering Parameter Figures of Merit",
-            table_id=f"III",
+            table_id="III",
             headers=["RF Parameter Metric", "Extracted Value", "Physical Description"],
             rows=table_iii_rows
         )
         s_content += table_iii_html
+        toc_tables.append(("Table III. Key Scattering Parameter Figures of Merit", "#table-iii"))
         table_counter += 1
         
         # Load plots
@@ -804,6 +913,7 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
                     fig_num=fig_counter
                 )
                 plots_html += f"<div>{fig_html}</div>"
+                toc_figures.append((f"Fig. {fig_counter}. {title} response plotted across the analyzed RF band", f"fig-{fig_counter}"))
                 fig_counter += 1
             plots_html += "</div>"
             s_content += plots_html
@@ -811,6 +921,7 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         sections_html += _render_section(
             title="Scattering Parameter Frequency Response",
             number="III",
+            section_id="sec-iii",
             content=s_content
         )
         
@@ -830,7 +941,7 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         ]
         table_iv_html = _render_table(
             caption="Resonant Frequency and Band-Cutoff Analysis Summary",
-            table_id=f"IV",
+            table_id="IV",
             headers=["RF Cutoff Characteristic", "Extracted Numerical Value"],
             rows=cutoff_rows
         )
@@ -838,64 +949,146 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         sections_html += _render_section(
             title="Resonant and Cutoff Frequency Characterization",
             number="IV",
+            section_id="sec-iv",
             content="This section details the extraction of the self-resonant frequency (SRF) or the frequency cut-offs under the selected attenuation threshold.\n" + table_iv_html
         )
+        toc_sections.append(("IV. Resonant and Cutoff Frequency Characterization", "#sec-iv"))
+        toc_tables.append(("Table IV. Resonant Frequency and Band-Cutoff Analysis Summary", "#table-iv"))
         table_counter += 1
         
-    # --- Section V: Equivalent Circuit Model ---
-    model_data = history.get("compact_model", {})
-    if model_data:
-        summary = model_data.get("summary", {})
-        method = summary.get("method", model_data.get("method", "Shunt Fitting"))
-        c_eff = summary.get("c_eff", model_data.get("c_eff", "N/A"))
-        nrms = summary.get("nrms", model_data.get("nrms", "N/A"))
-        
-        c_eff_str = f"{c_eff:.4e} F" if isinstance(c_eff, (int, float)) else str(c_eff)
-        nrms_str = f"{nrms:.4f}" if isinstance(nrms, (int, float)) else str(nrms)
-        
-        model_rows = [
-            ["Extraction Method / Topology", str(method)],
-            ["Extracted Effective Component Value (C_eff / L_eff)", c_eff_str],
-            ["Normalized Root-Mean-Square Error (NRMS)", nrms_str],
-            ["Fitting Validity Status", "High Correlation (NRMS < 0.05)" if isinstance(nrms, (int, float)) and nrms < 0.05 else "Valid Model"]
-        ]
-        table_v_html = _render_table(
-            caption="Equivalent Physical Circuit Model Extraction Metrics",
-            table_id=f"V",
-            headers=["Model Extraction Parameter", "Numerical Extracted Value"],
-            rows=model_rows
-        )
-        
-        model_content = "A physics-based equivalent circuit model was extracted to represent the DUT behavior as a lumped element SPICE model.\n" + table_v_html
-        table_counter += 1
-        
-        # Spice Netlist
-        netlist = model_data.get("spice_netlist")
-        if netlist:
-            model_content += _render_code_block(netlist, f"SPICE Netlist (Lumped Element Model for {measurement_id})")
-            
-        # Fit plots
-        plots = model_data.get("plots", [])
-        if plots:
-            plots_html = '<div class="grid-2col">'
-            for p in plots:
-                pid = p.get("id")
-                title = p.get("title", pid)
-                img = p.get("image", "")
+    # --- Section V: Equivalent Circuit Model (Multi-Model Support) ---
+    shunt_data = history.get("compact_model_shunt", {})
+    vf_data = history.get("compact_model_vf", {})
+    legacy_data = history.get("compact_model", {})
+    
+    # Fallback legacy handling
+    if legacy_data:
+        l_method = legacy_data.get("summary", {}).get("method", legacy_data.get("method", ""))
+        if "vf" in l_method.lower() or "vector" in l_method.lower():
+            if not vf_data:
+                vf_data = legacy_data
+        else:
+            if not shunt_data:
+                shunt_data = legacy_data
                 
-                fig_html = _render_figure(
-                    base64_img=img,
-                    caption=f"Lumped element model fit vs experimental data: {title}.",
-                    fig_num=fig_counter
-                )
-                plots_html += f"<div>{fig_html}</div>"
-                fig_counter += 1
-            plots_html += "</div>"
-            model_content += plots_html
+    has_models = bool(shunt_data or vf_data)
+    
+    if has_models:
+        toc_sections.append(("V. Lumped Equivalent Circuit Model Fitting", "#sec-v"))
+        model_content = "This section presents the physics-based lumped equivalent circuit models extracted from experimental scattering parameters using two numerical methodologies: the Physical Shunt Model (optimized physical topology search) and the Vector Fitting Model (rational transfer function fitting).\n"
+        
+        # Sub-section V-A: Physical Shunt
+        if shunt_data:
+            summary = shunt_data.get("summary", {})
+            c_eff = summary.get("c_eff", shunt_data.get("c_eff", "N/A"))
+            nrms = summary.get("nrms", shunt_data.get("nrms", "N/A"))
+            c_eff_str = f"{c_eff:.4e} F" if isinstance(c_eff, (int, float)) else str(c_eff)
+            nrms_str = f"{nrms:.4f}" if isinstance(nrms, (int, float)) else str(nrms)
+            
+            shunt_rows = [
+                ["Extraction Method / Topology", "Physical Shunt Fit (Multi-branch Search)"],
+                ["Extracted Effective Component Value (C_eff / L_eff)", c_eff_str],
+                ["Normalized Root-Mean-Square Error (NRMS)", nrms_str],
+                ["Fitting Validity Status", "High Correlation (NRMS < 0.05)" if isinstance(nrms, (int, float)) and nrms < 0.05 else "Valid Model"]
+            ]
+            table_va_html = _render_table(
+                caption="Equivalent Shunt Physical Model Extraction Metrics",
+                table_id="V-A",
+                headers=["Model Extraction Parameter", "Numerical Extracted Value"],
+                rows=shunt_rows
+            )
+            model_content += f"""
+            <div id="sec-v-a" style="margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 15px;">
+                <h3 style="font-family: 'Lora', serif; font-size: 15px; color: #0f52ba; margin-bottom: 12px;">V-A. Physical Shunt Circuit Model</h3>
+                <p class="section-desc" style="font-size: 13.5px; color: #475569;">The Shunt extraction methodology fits the component's frequency behavior to a lumped physical RLC model using optimized branch parameters, guaranteeing a physically realizable network structure.</p>
+                {table_va_html}
+            """
+            toc_sections.append(("&nbsp;&nbsp;&bull; V-A. Physical Shunt Circuit Model", "#sec-v-a"))
+            toc_tables.append(("Table V-A. Equivalent Shunt Physical Model Extraction Metrics", "#table-v-a"))
+            
+            netlist = shunt_data.get("spice_netlist")
+            if netlist:
+                model_content += _render_code_block(netlist, f"SPICE Netlist (Physical Shunt Model)")
+                
+            plots = shunt_data.get("plots", [])
+            if plots:
+                plots_html = '<div class="grid-2col">'
+                for p in plots:
+                    pid = p.get("id")
+                    title = p.get("title", pid)
+                    img = p.get("image", "")
+                    fig_html = _render_figure(
+                        base64_img=img,
+                        caption=f"Physical Shunt model fit vs experimental data: {title}.",
+                        fig_num=fig_counter
+                    )
+                    plots_html += f"<div>{fig_html}</div>"
+                    toc_figures.append((f"Fig. {fig_counter}. Physical Shunt model fit vs experimental data: {title}", f"fig-{fig_counter}"))
+                    fig_counter += 1
+                plots_html += "</div>"
+                model_content += plots_html
+                
+            model_content += "</div>"
+            table_counter += 1
+            
+        # Sub-section V-B: Vector Fitting
+        if vf_data:
+            summary = vf_data.get("summary", {})
+            c_eff = summary.get("c_eff", vf_data.get("c_eff", "N/A"))
+            nrms = summary.get("nrms", vf_data.get("nrms", "N/A"))
+            c_eff_str = f"{c_eff:.4e} F" if isinstance(c_eff, (int, float)) else str(c_eff)
+            nrms_str = f"{nrms:.4f}" if isinstance(nrms, (int, float)) else str(nrms)
+            
+            vf_rows = [
+                ["Extraction Method / Topology", "Vector Fitting (Rational Function Model)"],
+                ["Extracted Effective Component Value (C_eff / L_eff)", c_eff_str],
+                ["Normalized Root-Mean-Square Error (NRMS)", nrms_str],
+                ["Fitting Validity Status", "High Correlation (NRMS < 0.05)" if isinstance(nrms, (int, float)) and nrms < 0.05 else "Valid Model"]
+            ]
+            table_vb_html = _render_table(
+                caption="Equivalent Vector Fitting Model Extraction Metrics",
+                table_id="V-B",
+                headers=["Model Extraction Parameter", "Numerical Extracted Value"],
+                rows=vf_rows
+            )
+            model_content += f"""
+            <div id="sec-v-b" style="margin-top: 30px; border-top: 1px dashed #cbd5e1; padding-top: 15px;">
+                <h3 style="font-family: 'Lora', serif; font-size: 15px; color: #0f52ba; margin-bottom: 12px;">V-B. Vector Fitting (VF) Rational Model</h3>
+                <p class="section-desc" style="font-size: 13.5px; color: #475569;">The Vector Fitting technique solves a rational pole-residue approximation to produce highly accurate, wideband spice subcircuits, ideal for complex and multi-resonant component behaviors.</p>
+                {table_vb_html}
+            """
+            toc_sections.append(("&nbsp;&nbsp;&bull; V-B. Vector Fitting Rational Model", "#sec-v-b"))
+            toc_tables.append(("Table V-B. Equivalent Vector Fitting Model Extraction Metrics", "#table-v-b"))
+            
+            netlist = vf_data.get("spice_netlist")
+            if netlist:
+                model_content += _render_code_block(netlist, f"SPICE Netlist (Vector Fitting Model)")
+                
+            plots = vf_data.get("plots", [])
+            if plots:
+                plots_html = '<div class="grid-2col">'
+                for p in plots:
+                    pid = p.get("id")
+                    title = p.get("title", pid)
+                    img = p.get("image", "")
+                    fig_html = _render_figure(
+                        base64_img=img,
+                        caption=f"Vector Fitting model fit vs experimental data: {title}.",
+                        fig_num=fig_counter
+                    )
+                    plots_html += f"<div>{fig_html}</div>"
+                    toc_figures.append((f"Fig. {fig_counter}. Vector Fitting model fit vs experimental data: {title}", f"fig-{fig_counter}"))
+                    fig_counter += 1
+                plots_html += "</div>"
+                model_content += plots_html
+                
+            model_content += "</div>"
+            table_counter += 1
             
         sections_html += _render_section(
             title="Lumped Equivalent Circuit Model Fitting",
             number="V",
+            section_id="sec-v",
             content=model_content
         )
         
@@ -918,15 +1111,18 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         ]
         table_vi_html = _render_table(
             caption="Quick Component Extraction Lumped Value & Parasitics",
-            table_id=f"VI",
+            table_id="VI",
             headers=["Lumped Component Parameter", "Extracted Value"],
             rows=quick_rows
         )
         sections_html += _render_section(
             title="Quick Lumped Parameter & Parasitics Extraction",
             number="VI",
+            section_id="sec-vi",
             content="This section reports the rapidly extracted nominal physical parameters and crucial parasitics, including the high-frequency Equivalent Series Resistance (ESR) and self-resonance.\n" + table_vi_html
         )
+        toc_sections.append(("VI. Quick Lumped Parameter & Parasitics Extraction", "#sec-vi"))
+        toc_tables.append(("Table VI. Quick Component Extraction Lumped Value & Parasitics", "#table-vi"))
         table_counter += 1
         
     # --- Section VII: SAMM Topology Recommendation ---
@@ -950,7 +1146,7 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
             
         table_vii_html = _render_table(
             caption="SAMM Multi-Model Topology Fitting Recommendations",
-            table_id=f"VII",
+            table_id="VII",
             headers=["Recommended Circuit Topology", "Nominal Fitted Value", "Fit Error (%)", "Frequency Zone"],
             rows=samm_rows
         )
@@ -965,13 +1161,17 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
                 caption="SAMM multi-topology fitting and impedance zones projection.",
                 fig_num=fig_counter
             )
+            toc_figures.append((f"Fig. {fig_counter}. SAMM multi-topology fitting and impedance zones projection", f"fig-{fig_counter}"))
             fig_counter += 1
             
         sections_html += _render_section(
             title="Systematic Multi-Model Topology Synthesis (SAMM)",
             number="VII",
+            section_id="sec-vii",
             content=samm_content
         )
+        toc_sections.append(("VII. Systematic Multi-Model Topology Synthesis (SAMM)", "#sec-vii"))
+        toc_tables.append(("Table VII. SAMM Multi-Model Topology Fitting Recommendations", "#table-vii"))
         
     # --- Section VIII: Datasheet Reference ---
     if datasheet:
@@ -980,26 +1180,77 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         ds_mtime = datasheet.get("mtime", 0)
         ds_date = datetime.datetime.fromtimestamp(ds_mtime).strftime("%Y-%m-%d %H:%M:%S") if ds_mtime else "N/A"
         
+        # Keep and format original web datasheet link
+        ds_web_url = datasheet.get("url") or metadata.get("datasheet_url") or ""
+        
         full_pdf_path = os.path.join(BIBLIOTECA_DIR, ds_path.replace('/', os.sep)).replace(os.sep, '/')
         ds_rows = [
             ["Document Label / File", ds_name],
             ["Document Path in Library", f"<a href='file:///{full_pdf_path}' target='_blank'>{ds_path}</a>" if ds_path else "N/A"],
             ["Linked Date", ds_date],
-            ["Mouser Supplier Link", f"<a href='{metadata.get('supplier_url')}' target='_blank'>Product Page</a>" if metadata.get('supplier_url') else "N/A"],
-            ["Manufacturer Datasheet URL", f"<a href='{metadata.get('datasheet_url')}' target='_blank'>Direct Datasheet PDF</a>" if metadata.get('datasheet_url') else "N/A"]
+            ["Original Datasheet Web Link", f"<a href='{ds_web_url}' target='_blank'>{ds_web_url}</a>" if ds_web_url else "N/A"],
+            ["Mouser Supplier Link", f"<a href='{metadata.get('supplier_url') or metadata.get('mouser_product_url')}' target='_blank'>Product Page</a>" if metadata.get('supplier_url') or metadata.get('mouser_product_url') else "N/A"]
         ]
         table_viii_html = _render_table(
             caption="Attached Component Reference Datasheets and Documents",
-            table_id=f"VIII",
+            table_id="VIII",
             headers=["Linked Reference Field", "Document Link / URL Reference"],
             rows=ds_rows
         )
         sections_html += _render_section(
             title="Technical Datasheets and References",
             number="VIII",
+            section_id="sec-viii",
             content="Official manufacturer datasheets and supplier documentation linked to this measurement for verification purposes are indexed below.\n" + table_viii_html
         )
+        toc_sections.append(("VIII. Technical Datasheets and References", "#sec-viii"))
+        toc_tables.append(("Table VIII. Attached Component Reference Datasheets and Documents", "#table-viii"))
         table_counter += 1
+        
+    # Build Table of Contents HTML dynamically
+    toc_html = """
+    <div class="toc-container" id="table-of-contents">
+        <div class="toc-title">Document Index (Table of Contents)</div>
+        <div class="toc-grid">
+            <div class="toc-column">
+                <div class="toc-column-title">1. Document Sections</div>
+                <ul class="toc-list">
+    """
+    for title, anchor in toc_sections:
+        if "&nbsp;&nbsp;&bull;" in title:
+            toc_html += f'                    <li class="toc-item toc-subitem"><a href="{anchor}">{title}</a></li>\n'
+        else:
+            toc_html += f'                    <li class="toc-item"><a href="{anchor}">{title}</a></li>\n'
+            
+    toc_html += """
+                </ul>
+            </div>
+            <div class="toc-column">
+    """
+    
+    if toc_tables:
+        toc_html += """
+                <div class="toc-column-title" style="margin-top: 0;">2. List of Tables</div>
+                <ul class="toc-list" style="margin-bottom: 20px;">
+        """
+        for title, anchor in toc_tables:
+            toc_html += f'                    <li class="toc-item" style="font-size: 12.5px;"><a href="{anchor}">{title}</a></li>\n'
+        toc_html += "                </ul>\n"
+        
+    if toc_figures:
+        toc_html += """
+                <div class="toc-column-title">3. List of Figures</div>
+                <ul class="toc-list">
+        """
+        for title, anchor in toc_figures:
+            toc_html += f'                    <li class="toc-item" style="font-size: 12.5px;"><a href="#{anchor}">{title}</a></li>\n'
+        toc_html += "                </ul>\n"
+        
+    toc_html += """
+            </div>
+        </div>
+    </div>
+    """
         
     # Build complete document
     html_content = f"""<!DOCTYPE html>
@@ -1018,6 +1269,7 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         {header_html}
         {title_block_html}
         {abstract_html}
+        {toc_html}
         {sections_html}
         
         <div class="report-footer">

@@ -60,7 +60,7 @@ try:
     from logic.s_params import process_s_params_csv, process_s_params_touchstone
     from logic.vna import run_sweep, get_vna_connection, calibrate_step, finalize_calibration, process_sweep, start_calibration
     from logic.compact_models import extract_compact_model
-    from logic.nominal_extraction import extract_nominal_value
+    from logic.nominal_extraction import extract_nominal_value, extract_nominal_typical
     from logic.correction import apply_hp_correction
     from logic.report_template import generate_report_html
 except Exception as e:
@@ -103,6 +103,9 @@ os.makedirs(CONFIG_DIR, exist_ok=True)
 for default_nanovna in ("NanoVNA-Izan", "NanoVNA-LAB1", "NanoVNA-LAB2"):
     for component_folder in NANOVNA_COMPONENT_FOLDERS.values():
         os.makedirs(os.path.join(BASE_MEAS_DIR, default_nanovna, component_folder), exist_ok=True)
+# Directorios para E5071C
+os.makedirs(os.path.join(BASE_CAL_DIR, "VNA-E5071C"), exist_ok=True)
+os.makedirs(os.path.join(BASE_MEAS_DIR, "VNA-E5071C"), exist_ok=True)
 
 def get_device_dir(base_dir, device_name):
     # Validar nombre del dispositivo para evitar escape de directorios
@@ -816,6 +819,12 @@ def update_component_metadata(req: ComponentMetadataRequest, source="manual"):
     current["updated_at"] = time.time()
     current["metadata_source"] = source
     entry["component_metadata"] = current
+    
+    # Synchronize datasheet web link with main datasheet record
+    if "datasheet_url" in incoming and incoming["datasheet_url"]:
+        datasheet = entry.setdefault("datasheet", {})
+        datasheet["url"] = incoming["datasheet_url"]
+        
     save_library_index(index)
     return entry
 
@@ -963,6 +972,7 @@ def enrich_component_from_mouser(req: MouserEnrichRequest):
 # --- Global VNA State ---
 vna_instance = None
 vna_current_type = None
+e5071c_ip = "192.168.1.12"
 
 def get_vna(device_type="NanoVNA"):
     global vna_instance, vna_current_type
@@ -970,8 +980,14 @@ def get_vna(device_type="NanoVNA"):
     is_ok = False
     if vna_instance is not None and vna_current_type == device_type:
         try:
-            # Try multiple ways to check if it's still alive
-            if hasattr(vna_instance, 'is_connected'):
+            # Re-conectar si la dirección IP del E5071C ha cambiado
+            if "E5071C" in device_type and hasattr(vna_instance, 'ip_address'):
+                if vna_instance.ip_address != e5071c_ip:
+                    logging.info(f"Reconectando VNA E5071C: IP cambió de {vna_instance.ip_address} a {e5071c_ip}")
+                    is_ok = False
+                else:
+                    is_ok = vna_instance.connected
+            elif hasattr(vna_instance, 'is_connected'):
                 is_ok = vna_instance.is_connected()
             elif hasattr(vna_instance, 'connected'):
                 is_ok = vna_instance.connected
@@ -997,9 +1013,12 @@ def get_vna(device_type="NanoVNA"):
         arch = "NanoVNA"
         if "HP" in device_type and "8752" in device_type:
             arch = "HP8752A"
+        elif "E5071C" in device_type:
+            arch = "E5071C"
         
         try:
-            vna_instance = get_vna_connection(device_type=arch)
+            resource = e5071c_ip if arch == "E5071C" else None
+            vna_instance = get_vna_connection(device_type=arch, resource_name=resource)
             vna_current_type = device_type
             logging.info(f"Connected to {arch}")
         except Exception as e:
@@ -1043,6 +1062,32 @@ class HPMeasStepRequest(BaseModel):
     step_name: str
     params: Optional[dict] = None
     device: str = "VNA-HP-8752A"
+
+class E5071CCalStartRequest(BaseModel):
+    cal_type: str = "solt"  # "sol" | "solt"
+    port1: int = 1
+    port2: int = 2
+    start_mhz: float
+    stop_mhz: float
+    points: int
+    device: str = "VNA-E5071C"
+    ip_address: Optional[str] = None
+    calkit: Optional[str] = "calboard-izan"
+
+class E5071CCalMeasureRequest(BaseModel):
+    standard: str  # "open" | "short" | "load" | "thru"
+    port: int = 1
+    port2: int = 2
+    device: str = "VNA-E5071C"
+
+class E5071CSetupRequest(BaseModel):
+    averaging_enabled: bool = False
+    averaging_count: int = 16
+    smoothing_enabled: bool = False
+    smoothing_aperture: float = 5.0
+    sweep_type: str = "LIN"
+    device: str = "VNA-E5071C"
+    ip_address: Optional[str] = None
 
 class DatasheetDownloadRequest(BaseModel):
     datasheet_url: str
@@ -1088,6 +1133,8 @@ class ComponentMetadataRequest(BaseModel):
     lifecycle_status: Optional[str] = None
     metadata_source: Optional[str] = None
     notes: Optional[str] = None
+    datasheet_url: Optional[str] = None
+    supplier_url: Optional[str] = None
 
 class DatasheetExtractRequest(BaseModel):
     datasheet_relative_path: str
@@ -1858,8 +1905,11 @@ async def vna_hp_correct_offline(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/vna/connect")
-async def vna_connect(device: str = "NanoVNA-Izan"):
+async def vna_connect(device: str = "NanoVNA-Izan", ip: Optional[str] = None):
+    global e5071c_ip
     try:
+        if ip and "E5071C" in device:
+            e5071c_ip = ip
         get_vna(device_type=device)
         return {"connected": True}
     except Exception as e:
@@ -1905,6 +1955,137 @@ async def vna_hp_reset(device: str = "VNA-HP-8752A"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- E5071C Endpoints ---
+
+@app.post("/api/vna/e5071c/setup")
+async def vna_e5071c_setup(req: E5071CSetupRequest):
+    global e5071c_ip
+    try:
+        if req.ip_address:
+            e5071c_ip = req.ip_address
+        vna = get_vna(device_type=req.device)
+        vna.set_averaging(req.averaging_enabled, req.averaging_count)
+        vna.set_smoothing(req.smoothing_enabled, req.smoothing_aperture)
+        vna.set_sweep_type(req.sweep_type)
+        return {"status": "success", "message": "Setup aplicado correctamente"}
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/vna/e5071c/calibrate/start")
+async def vna_e5071c_cal_start(req: E5071CCalStartRequest):
+    global e5071c_ip
+    try:
+        if req.ip_address:
+            e5071c_ip = req.ip_address
+        vna = get_vna(device_type=req.device)
+        vna.set_sweep(req.start_mhz * 1e6, req.stop_mhz * 1e6, req.points)
+        calkit_name = req.calkit or "calboard-izan"
+        if req.cal_type == "sol":
+            vna.cal_sol_start(req.port1, calkit_name=calkit_name)
+        else:
+            vna.cal_solt_start(req.port1, req.port2, calkit_name=calkit_name)
+        return {"status": "success", "message": f"Calibración {req.cal_type.upper()} iniciada"}
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/vna/e5071c/calibrate/measure")
+async def vna_e5071c_cal_measure(req: E5071CCalMeasureRequest):
+    try:
+        vna = get_vna(device_type=req.device)
+        if req.standard == "thru":
+            vna.cal_measure_thru(req.port, req.port2)
+        else:
+            vna.cal_measure_standard(req.standard, req.port)
+        return {"status": "success", "message": f"Estándar {req.standard.upper()} medido en puerto {req.port}"}
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/vna/e5071c/calibrate/compute")
+async def vna_e5071c_cal_compute(device: str = "VNA-E5071C"):
+    try:
+        vna = get_vna(device_type=device)
+        vna.cal_compute()
+        return {"status": "success", "message": "Coeficientes calculados y aplicados"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/vna/e5071c/export")
+async def vna_e5071c_export(filename: str, device: str = "VNA-E5071C", save_to_server: bool = True):
+    try:
+        vna = get_vna(device_type=device)
+        state = vna.export_cal_json()
+        if state is None:
+            raise HTTPException(status_code=400, detail="No se pudo exportar la calibración")
+
+        import json
+        import base64
+        json_str = json.dumps(state, indent=4)
+        file_content_b64 = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+
+        if save_to_server:
+            if not filename.endswith('.json'): filename += '.json'
+            device_dir = get_device_dir(BASE_CAL_DIR, device)
+            target_path = os.path.join(device_dir, filename)
+            with open(target_path, 'w') as f:
+                f.write(json_str)
+
+        return {
+            "status": "success",
+            "message": "Calibración exportada correctamente",
+            "file_content": file_content_b64,
+            "filename": filename
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/vna/e5071c/import")
+async def vna_e5071c_import(req: HPCalImportRequest):
+    try:
+        device = req.device if "E5071C" in req.device else "VNA-E5071C"
+        if not req.filename.endswith('.json'): req.filename += '.json'
+        device_dir = get_device_dir(BASE_CAL_DIR, device)
+        target_path = os.path.join(device_dir, req.filename)
+        if not os.path.exists(target_path):
+            raise HTTPException(status_code=404, detail="Archivo de calibración no encontrado")
+        import json
+        with open(target_path, 'r') as f:
+            state = json.load(f)
+        vna = get_vna(device_type=device)
+        vna.import_cal_json(state)
+        return {"status": "success", "message": "Calibración restaurada en el VNA"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/vna/e5071c/import_file")
+async def vna_e5071c_import_file(device: str = Form("VNA-E5071C"), file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        import json
+        try:
+            state = json.loads(content)
+        except json.JSONDecodeError as je:
+            raise HTTPException(status_code=400, detail=f"El archivo no es un JSON válido: {je}")
+        vna = get_vna(device_type=device)
+        vna.import_cal_json(state)
+        return {"status": "success", "message": "Calibración cargada desde archivo y restaurada en el VNA"}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logging.error(f"E5071C Import failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/vna/e5071c/reset")
+async def vna_e5071c_reset(device: str = "VNA-E5071C"):
+    try:
+        vna = get_vna(device_type=device)
+        vna.reset_instrument()
+        return {"status": "success", "message": "E5071C reiniciado correctamente"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/vna/measurement")
 async def vna_measurement(
     start_mhz: float = Form(...),
@@ -1918,7 +2099,9 @@ async def vna_measurement(
     save_to_library: bool = Form(False),
     component_type: Optional[str] = Form(None),
     averaging_count: int = Form(1),
-    smoothing_window: int = Form(1)
+    smoothing_window: int = Form(1),
+    port1: int = Form(1),
+    port2: int = Form(2)
 ):
     temp_cal_path = None
     should_cleanup = False
@@ -1952,33 +2135,141 @@ async def vna_measurement(
         arch = "NanoVNA"
         if "HP" in device and "8752" in device:
             arch = "HP8752A"
+        elif "E5071C" in device:
+            arch = "E5071C"
 
         vna = get_vna(device_type=device)
 
-        # Si hay un archivo de calibración y es HP, lo importamos antes de medir
+        # Si hay un archivo de calibración, lo importamos antes de medir
         if temp_cal_path and arch == "HP8752A":
+            import json
+            with open(temp_cal_path, 'r') as f:
+                state = json.load(f)
+            vna.import_cal_json(state)
+        elif temp_cal_path and arch == "E5071C":
             import json
             with open(temp_cal_path, 'r') as f:
                 state = json.load(f)
             vna.import_cal_json(state)
             # Bloquear parámetros al archivo si se solicitó (aquí ya vienen del frontend)
 
-        if arch != "NanoVNA":
-            component_type = None
-            averaging_count = 1
-            smoothing_window = 1
-
-        result = run_sweep(
-            start_mhz * 1e6,
-            stop_mhz * 1e6,
-            points,
-            calibration_path=temp_cal_path if arch == "NanoVNA" else None,
-            vna=vna,
-            one_port=is_one_port,
-            device_type=arch,
-            averaging_count=averaging_count,
-            smoothing_window=smoothing_window,
-        )
+        if arch == "E5071C":
+            # E5071C: realizar la medición directamente usando sus métodos nativos de 1 y 2 puertos
+            vna.set_sweep(start_mhz * 1e6, stop_mhz * 1e6, points)
+            
+            if is_one_port:
+                # Medición de 1 puerto en port1
+                freqs, s11 = vna.get_data(parameter=f"S{port1}{port1}")
+                
+                # Generar contenido Touchstone .s1p
+                lines = [
+                    "! Generated by RF Tool Suite (Agilent E5071C)",
+                    f"! Port Mapping: Port 1 = Physical Port {port1}",
+                    f"# Hz S RI R 50",
+                    f"!Freq.(Hz) S11(Real) S11(Imag)"
+                ]
+                for i in range(len(freqs)):
+                    lines.append(f"{freqs[i]:.10e} {np.real(s11[i]):.16e} {np.imag(s11[i]):.16e}")
+                touchstone_content = "\n".join(lines) + "\n"
+                
+                # Generar plot S11
+                s11_db = 20 * np.log10(np.maximum(np.abs(s11), 1e-12))
+                import matplotlib
+                matplotlib.use('Agg')
+                import matplotlib.pyplot as plt
+                import io
+                import base64
+                plt.figure(figsize=(10, 5))
+                plt.plot(freqs/1e6, s11_db, label=f"S{port1}{port1} (dB)", color='blue', linewidth=1.5)
+                plt.title(f"E5071C 1-Port Measurement (Port {port1})")
+                plt.xlabel("Frequency (MHz)")
+                plt.ylabel("Magnitude (dB)")
+                plt.grid(True, alpha=0.3)
+                plt.legend()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+                buf.seek(0)
+                plot_base64 = base64.b64encode(buf.read()).decode('utf-8')
+                plt.close()
+                
+                result = {
+                    "status": "success",
+                    "freqs": freqs.tolist(),
+                    "s11_real": np.real(s11).tolist(),
+                    "s11_imag": np.imag(s11).tolist(),
+                    "plot": plot_base64,
+                    "touchstone_content": touchstone_content,
+                    "port1": port1,
+                    "port2": port1
+                }
+            else:
+                # Medición completa de 2 puertos reales usando port1 y port2
+                freqs, s11, s21, s12, s22 = vna.measure_full_2port(port1=port1, port2=port2)
+                
+                # Generar contenido Touchstone .s2p con los 4 parámetros reales medidos
+                lines = [
+                    "! Generated by RF Tool Suite (Agilent E5071C)",
+                    f"! Port Mapping: Port 1 = Physical Port {port1}, Port 2 = Physical Port {port2}",
+                    f"# Hz S RI R 50",
+                    f"!Freq.(Hz) S11(Real) S11(Imag) S21(Real) S21(Imag) S12(Real) S12(Imag) S22(Real) S22(Imag)"
+                ]
+                for i in range(len(freqs)):
+                    # Formato standard s2p: Freq ReS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22
+                    lines.append(f"{freqs[i]:.10e} {np.real(s11[i]):.16e} {np.imag(s11[i]):.16e} {np.real(s21[i]):.16e} {np.imag(s21[i]):.16e} {np.real(s12[i]):.16e} {np.imag(s12[i]):.16e} {np.real(s22[i]):.16e} {np.imag(s22[i]):.16e}")
+                touchstone_content = "\n".join(lines) + "\n"
+                
+                # Generar plot con S11 y S21
+                s11_db = 20 * np.log10(np.maximum(np.abs(s11), 1e-12))
+                s21_db = 20 * np.log10(np.maximum(np.abs(s21), 1e-12))
+                import matplotlib
+                matplotlib.use('Agg')
+                import matplotlib.pyplot as plt
+                import io
+                import base64
+                plt.figure(figsize=(10, 5))
+                plt.plot(freqs/1e6, s11_db, label=f"S{port1}{port1} (dB)", color='blue', linewidth=1.5)
+                plt.plot(freqs/1e6, s21_db, label=f"S{port2}{port1} (dB)", color='red', linewidth=1.5)
+                plt.title(f"E5071C 2-Port Measurement (Ports {port1}-{port2})")
+                plt.xlabel("Frequency (MHz)")
+                plt.ylabel("Magnitude (dB)")
+                plt.grid(True, alpha=0.3)
+                plt.legend()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+                buf.seek(0)
+                plot_base64 = base64.b64encode(buf.read()).decode('utf-8')
+                plt.close()
+                
+                result = {
+                    "status": "success",
+                    "freqs": freqs.tolist(),
+                    "s11_real": np.real(s11).tolist(),
+                    "s11_imag": np.imag(s11).tolist(),
+                    "s21_real": np.real(s21).tolist(),
+                    "s21_imag": np.imag(s21).tolist(),
+                    "plot": plot_base64,
+                    "touchstone_content": touchstone_content,
+                    "port1": port1,
+                    "port2": port2
+                }
+        else:
+            # Flujo clásico para NanoVNA o HP8752A
+            if arch == "HP8752A":
+                component_type = None
+                averaging_count = 1
+                smoothing_window = 1
+            
+            result = run_sweep(
+                start_mhz * 1e6,
+                stop_mhz * 1e6,
+                points,
+                calibration_path=temp_cal_path if arch == "NanoVNA" else None,
+                vna=vna,
+                one_port=is_one_port,
+                device_type=arch,
+                averaging_count=averaging_count,
+                smoothing_window=smoothing_window,
+            )
         
         if save_to_library and save_filename:
             ext = ".s1p" if is_one_port else ".s2p"
@@ -2193,18 +2484,17 @@ async def quick_extract_component(
             s_params = ntwk.s
             
             # Extract Z based on method
-            if ntwk.nports == 1:
+            if ntwk.nports == 1 or method == "oneport":
                 zdut = ntwk.z[:, 0, 0]
             else:
+                s21 = s_params[:, 1, 0]
                 if method == "shunt":
-                    s21 = s_params[:, 1, 0]
-                    zdut = z0 * s21 / (2.0 * (1.0 - s21 + 1e-30))
+                    zdut = (z0 / 2.0) * s21 / (1.0 - s21 + 1e-30)
                 else: # series
-                    abcd = ntwk.a
-                    zdut = abcd[:, 0, 1] # B parameter
+                    zdut = (2.0 * z0) * (1.0 - s21) / (s21 + 1e-30)
 
             magz = np.abs(zdut)
-            extraction = extract_nominal_value(freqs, zdut, component_type)
+            extraction = extract_nominal_typical(freqs, zdut, component_type)
             results = {
                 "freq_hz": freqs.tolist(),
                 "mag_z": magz.tolist(),

@@ -22,6 +22,7 @@ export function SParamExtractionTool() {
   // Calibraciones del servidor
   const [serverCalibrations, setServerCalibrations] = useState<{name: string, fmin: number, fmax: number, points: number}[]>([]);
   const [selectedCalName, setSelectedCalName] = useState<string>("");
+  const [device, setDevice] = useState<string>('NanoVNA-Izan');
   
   // Parámetros de barrido
   const [fmin, setFmin] = useState<number>(1);
@@ -30,11 +31,11 @@ export function SParamExtractionTool() {
 
   useEffect(() => {
     fetchCalibrations();
-  }, []);
+  }, [device]);
 
   const fetchCalibrations = async () => {
     try {
-      const response = await fetch('http://localhost:8080/api/vna/calibrations');
+      const response = await fetch(`http://localhost:8080/api/vna/calibrations?device=${encodeURIComponent(device)}`);
       if (response.ok) {
         const data = await response.json();
         setServerCalibrations(data);
@@ -87,6 +88,7 @@ export function SParamExtractionTool() {
         formData.append('stop_mhz', fmax.toString());
         formData.append('points', points.toString());
         formData.append('is_one_port', 'false');
+        formData.append('device', device);
         
         if (calFile) {
           formData.append('cal_file', calFile);
@@ -133,6 +135,22 @@ export function SParamExtractionTool() {
               <CardDescription>Selecciona una calibración del servidor o sube una propia.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-xs font-bold uppercase text-muted-foreground">Dispositivo VNA</Label>
+                <Select value={device} onValueChange={setDevice}>
+                  <SelectTrigger className="bg-input-background">
+                    <SelectValue placeholder="Seleccionar dispositivo..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="NanoVNA-Izan">NanoVNA-Izan</SelectItem>
+                    <SelectItem value="NanoVNA-LAB1">NanoVNA-LAB1</SelectItem>
+                    <SelectItem value="NanoVNA-LAB2">NanoVNA-LAB2</SelectItem>
+                    <SelectItem value="VNA-HP-8752A">VNA-HP-8752A (GPIB)</SelectItem>
+                    <SelectItem value="VNA-E5071C">VNA-E5071C (TCP/IP)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label>Calibraciones en servidor</Label>

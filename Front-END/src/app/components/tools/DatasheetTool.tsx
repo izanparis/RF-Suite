@@ -44,6 +44,8 @@ interface ComponentMetadata {
   mouser_availability?: string;
   lifecycle_status?: string;
   notes?: string;
+  datasheet_url?: string;
+  supplier_url?: string;
 }
 
 interface DatasheetResult {
@@ -86,11 +88,18 @@ export function DatasheetTool() {
   }, []);
 
   useEffect(() => {
-    setMetadata(selectedEntry?.component_metadata || {
-      manufacturer: selectedEntry?.datasheet?.manufacturer || '',
-      manufacturer_part_number: selectedEntry?.datasheet?.manufacturer_part_number || '',
-      supplier: selectedEntry?.datasheet?.supplier || '',
-    });
+    if (selectedEntry) {
+      setMetadata({
+        ...(selectedEntry.component_metadata || {}),
+        manufacturer: selectedEntry.component_metadata?.manufacturer || selectedEntry.datasheet?.manufacturer || '',
+        manufacturer_part_number: selectedEntry.component_metadata?.manufacturer_part_number || selectedEntry.datasheet?.manufacturer_part_number || '',
+        supplier: selectedEntry.component_metadata?.supplier || selectedEntry.datasheet?.supplier || '',
+        datasheet_url: selectedEntry.component_metadata?.datasheet_url || selectedEntry.datasheet?.url || '',
+        supplier_url: selectedEntry.component_metadata?.supplier_url || selectedEntry.component_metadata?.mouser_product_url || '',
+      });
+    } else {
+      setMetadata({});
+    }
   }, [selectedEntry]);
 
   const fetchMeasurements = async () => {
@@ -445,6 +454,14 @@ export function DatasheetTool() {
               <div className="space-y-2">
                 <Label className="text-xs">Notas</Label>
                 <Input value={metadata.notes || ''} onChange={(e) => updateMetadataField('notes', e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs">Enlace Web Datasheet (URL)</Label>
+                <Input value={metadata.datasheet_url || ''} onChange={(e) => updateMetadataField('datasheet_url', e.target.value)} placeholder="https://..." />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs">Enlace Web Producto</Label>
+                <Input value={metadata.supplier_url || ''} onChange={(e) => updateMetadataField('supplier_url', e.target.value)} placeholder="https://..." />
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <Button variant="outline" onClick={extractMetadata} disabled={loading || !selectedEntry?.datasheet?.relative_path}>

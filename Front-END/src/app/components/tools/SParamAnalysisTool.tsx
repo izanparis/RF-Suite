@@ -30,9 +30,88 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
   const [outDir, setOutDir] = useState<DirectoryHandle | null>(null);
 
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
   const [activePlotIdx, setActivePlotIdx] = useState(0);
   const [markers, setMarkers] = useState<any[]>([]);
+
+  interface ComparisonTrace {
+    id: string;
+    name: string;
+    data: any;
+    plots: any[];
+    summary: any;
+    zip_content: string;
+    color: string;
+    visible: boolean;
+  }
+
+  const [traces, setTraces] = useState<ComparisonTrace[]>([]);
+  const [activeTraceId, setActiveTraceId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'individual' | 'comparison'>('individual');
+  const [comparisonParam, setComparisonParam] = useState<'s11' | 's21' | 'phase11' | 'phase21' | 'vswr' | 'zmag_series' | 'zmag_shunt' | 'zmag'>('s11');
+
+  const activeTrace = useMemo(() => {
+    return traces.find(t => t.id === activeTraceId) || null;
+  }, [traces, activeTraceId]);
+
+  const result = useMemo(() => {
+    return activeTrace ? {
+      data: activeTrace.data,
+      plots: activeTrace.plots,
+      summary: activeTrace.summary,
+      zip_content: activeTrace.zip_content
+    } : null;
+  }, [activeTrace]);
+
+  const addTrace = (name: string, apiResult: any) => {
+    const newId = Math.random().toString(36).substring(2, 9);
+    const presetColors = [
+      '#3b82f6', // blue
+      '#ef4444', // red
+      '#10b981', // green
+      '#a855f7', // purple
+      '#f59e0b', // amber
+      '#06b6d4', // cyan
+      '#ec4899', // pink
+      '#14b8a6', // teal
+    ];
+    const newColor = presetColors[traces.length % presetColors.length];
+    const newTrace: ComparisonTrace = {
+      id: newId,
+      name,
+      data: apiResult.data,
+      plots: apiResult.plots,
+      summary: apiResult.summary,
+      zip_content: apiResult.zip_content,
+      color: newColor,
+      visible: true
+    };
+    
+    setTraces(prev => [...prev, newTrace]);
+    setActiveTraceId(newId);
+    setViewMode('individual');
+  };
+
+  const removeTrace = (id: string) => {
+    setTraces(prev => {
+      const next = prev.filter(t => t.id !== id);
+      if (activeTraceId === id) {
+        setActiveTraceId(next.length > 0 ? next[next.length - 1].id : null);
+      }
+      return next;
+    });
+  };
+
+  const cycleColor = (id: string) => {
+    const presetColors = ['#3b82f6', '#ef4444', '#10b981', '#a855f7', '#f59e0b', '#06b6d4', '#ec4899', '#14b8a6'];
+    setTraces(prev => prev.map(t => {
+      if (t.id === id) {
+        const currIdx = presetColors.indexOf(t.color);
+        const nextColor = presetColors[(currIdx + 1) % presetColors.length];
+        return { ...t, color: nextColor };
+      }
+      return t;
+    }));
+  };
 
   // Biblioteca de mediciones del servidor
   const [measurements, setMeasurements] = useState<{name: string, size: number, mtime: number, component_type?: string | null}[]>([]);
@@ -84,7 +163,6 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
     if (!val) return;
 
     setLoading(true);
-    setResult(null);
     setActivePlotIdx(0);
     setMarkers([]);
     setS2pFile(null); // Quitar archivo local si se elige biblioteca
@@ -100,7 +178,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
         throw new Error(errorData.detail || 'Error al analizar la medición del servidor');
       }
       const data = await response.json();
-      setResult(data);
+      addTrace(val, data);
 
       // Auto-save analysis results to server
       const matched = measurements.find(m => m.name === val) as any;
@@ -159,7 +237,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
     const hasS21 = result.data.n_ports >= 2;
     return result.data.freq_hz.map((f: number, i: number) => {
       const entry: any = {
-        freqMHz: (f / 1e6).toFixed(2),
+        freqMHz: Number((f / 1e6).toFixed(2)),
         s11: result.data.s11_db[i],
         phase11: result.data.s11_phase[i],
         vswr: result.data.vswr[i],
@@ -173,6 +251,65 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
       return entry;
     });
   }, [result]);
+
+  const minZMag = useMemo(() => {
+    if (!result?.data?.z_mag) return null;
+    const vals = result.data.z_mag.filter((v: number) => v !== null && isFinite(v));
+    return vals.length ? Math.min(...vals) : null;
+  }, [result]);
+
+  const minZMagShunt = useMemo(() => {
+    if (!result?.data?.z_mag_shunt) return null;
+    const vals = result.data.z_mag_shunt.filter((v: number) => v !== null && isFinite(v));
+    return vals.length ? Math.min(...vals) : null;
+  }, [result]);
+
+  // Merge multiple frequency vectors for Recharts comparison
+  const mergedData = useMemo(() => {
+    if (traces.length === 0) return [];
+    
+    // Collect unique frequencies and sort them
+    const freqSet = new Set<number>();
+    traces.forEach(t => {
+      if (t.visible) {
+        t.data.freq_hz.forEach((f: number) => freqSet.add(f));
+      }
+    });
+    const sortedFreqs = Array.from(freqSet).sort((a, b) => a - b);
+    
+    return sortedFreqs.map(f => {
+      const entry: any = {
+        freqMHz: Number((f / 1e6).toFixed(6)),
+        freqHz: f,
+      };
+      traces.forEach(t => {
+        if (t.visible) {
+          // Find frequency point within 1 Hz tolerance
+          const idx = t.data.freq_hz.findIndex((tf: number) => Math.abs(tf - f) < 1.0);
+          if (idx !== -1) {
+            entry[`${t.id}_s11`] = t.data.s11_db[idx];
+            entry[`${t.id}_phase11`] = t.data.s11_phase[idx];
+            entry[`${t.id}_vswr`] = t.data.vswr[idx];
+            entry[`${t.id}_zMag`] = t.data.z_mag ? t.data.z_mag[idx] : null;
+            if (t.data.n_ports >= 2) {
+              if (t.data.s21_db) {
+                entry[`${t.id}_s21`] = t.data.s21_db[idx];
+                entry[`${t.id}_phase21`] = t.data.s21_phase[idx];
+              }
+              if (t.data.z_mag_shunt) {
+                entry[`${t.id}_zMagShunt`] = t.data.z_mag_shunt[idx];
+              }
+            }
+          }
+        }
+      });
+      return entry;
+    });
+  }, [traces]);
+
+  const hasAnyS21 = useMemo(() => {
+    return traces.some(t => t.visible && t.data.n_ports >= 2);
+  }, [traces]);
 
   const handleChartClick = (state: any) => {
     if (state && state.activePayload) {
@@ -218,7 +355,6 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
       }
 
       setLoading(true);
-      setResult(null);
       setActivePlotIdx(0);
       setMarkers([]);
       try {
@@ -236,7 +372,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
         }
 
         const data = await response.json();
-        setResult(data);
+        addTrace(s2pFile.name, data);
       } catch (error) {
         console.error(error);
         alert(t('sparam.alert.error_analyze') + (error instanceof Error ? error.message : String(error)));
@@ -268,17 +404,153 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
   const downloadCurrentPlot = () => {
     const plot = result.plots[activePlotIdx];
     const link = document.createElement('a');
-    link.href = `data:image/png;base64,${plot.image}`;
-    link.download = `${plot.id}_plot.png`;
+    link.href = `data:image/svg+xml;base64,${plot.image}`;
+    link.download = `${plot.id}_plot.svg`;
     link.click();
+  };
+
+  const renderComparisonChart = () => {
+    const visibleTraces = traces.filter(t => t.visible);
+    if (visibleTraces.length === 0) {
+      return (
+        <div className="h-[400px] w-full flex flex-col items-center justify-center text-muted-foreground text-xs italic bg-white dark:bg-zinc-950/50 rounded-xl border border-border shadow-inner">
+          <Activity className="w-8 h-8 opacity-30 animate-pulse mb-2" />
+          Habilita al menos una traza en el panel lateral para visualizarla en el gráfico.
+        </div>
+      );
+    }
+    
+    const isLogZ = ['zmag_series', 'zmag_shunt'].includes(comparisonParam);
+    
+    // Parameter display details
+    let yLabel = '';
+    if (comparisonParam === 's11') yLabel = 'S11 Magnitude (dB)';
+    else if (comparisonParam === 's21') yLabel = 'S21 Magnitude (dB)';
+    else if (comparisonParam === 'phase11') yLabel = 'S11 Phase (degrees)';
+    else if (comparisonParam === 'phase21') yLabel = 'S21 Phase (degrees)';
+    else if (comparisonParam === 'vswr') yLabel = 'VSWR';
+    else if (comparisonParam === 'zmag_series') yLabel = 'Series Impedance |Z_series| (Ohm)';
+    else if (comparisonParam === 'zmag_shunt') yLabel = 'Shunt Impedance |Z_shunt| (Ohm)';
+
+    return (
+      <div className="w-full h-[500px] bg-white dark:bg-zinc-950/50 rounded-xl p-4 border border-border shadow-inner animate-in fade-in zoom-in duration-300 relative group/chart">
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 text-center">
+          <h3 className="text-xs font-black text-primary uppercase tracking-[0.25em]">{yLabel}</h3>
+        </div>
+        
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart 
+            data={mergedData} 
+            margin={{ top: 50, right: 30, left: 30, bottom: 30 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#888888" opacity={0.1} vertical={false} />
+            <XAxis 
+              dataKey="freqMHz" 
+              type={isLogZ ? "number" : "category"}
+              scale={isLogZ ? "log" : "auto"}
+              domain={isLogZ ? ['dataMin', 'dataMax'] : undefined}
+              tickFormatter={(val) => {
+                return typeof val === 'number' ? val.toFixed(2) : val;
+              }}
+              tick={{fontSize: 11, fill: '#666', fontWeight: 500}}
+              minTickGap={isLogZ ? 30 : 60}
+              label={{
+                value: 'Frequency (MHz)', 
+                position: 'insideBottom', 
+                offset: -15, 
+                fontSize: 13, 
+                fontWeight: 'bold',
+                fill: '#333'
+              }}
+            />
+            <YAxis 
+              tick={{fontSize: 11, fill: '#666', fontWeight: 500}}
+              domain={isLogZ ? [0.1, 'auto'] : ['auto', 'auto']}
+              scale={isLogZ ? 'log' : 'auto'}
+              tickFormatter={(val) => {
+                if (!isLogZ) return val;
+                if (val >= 1000) return `${(val/1000).toFixed(1)}k`;
+                if (val < 1 && val > 0) return val.toFixed(1);
+                return Math.round(val).toString();
+              }}
+              label={{
+                value: isLogZ ? 'Impedance' : yLabel, 
+                angle: -90, 
+                position: 'insideLeft', 
+                offset: -5,
+                fontSize: 13, 
+                fontWeight: 'bold',
+                fill: '#333'
+              }}
+            />
+            <Tooltip 
+              contentStyle={{
+                borderRadius: '12px',
+                backgroundColor: 'rgba(255, 255, 255, 0.98)',
+                border: '1px solid #cbd5e1', 
+                boxShadow: '0 10px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)',
+                fontSize: '11px'
+              }}
+              labelFormatter={(val) => `${val} MHz`}
+              cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '3 3' }}
+            />
+            <Legend 
+              verticalAlign="bottom" 
+              align="center" 
+              iconSize={8}
+              wrapperStyle={{
+                padding: '4px 8px',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                bottom: 0,
+                width: '100%'
+              }}
+            />
+            
+            {visibleTraces.map(t => {
+              let dataKey = `${t.id}_s11`;
+              if (comparisonParam === 's21') dataKey = `${t.id}_s21`;
+              else if (comparisonParam === 'phase11') dataKey = `${t.id}_phase11`;
+              else if (comparisonParam === 'phase21') dataKey = `${t.id}_phase21`;
+              else if (comparisonParam === 'vswr') dataKey = `${t.id}_vswr`;
+              else if (comparisonParam === 'zmag_series') dataKey = `${t.id}_zMag`;
+              else if (comparisonParam === 'zmag_shunt') dataKey = `${t.id}_zMagShunt`;
+              
+              if (comparisonParam === 's21' && t.data.n_ports < 2) return null;
+              if (comparisonParam === 'phase21' && t.data.n_ports < 2) return null;
+              if (comparisonParam === 'zmag_shunt' && (t.data.n_ports < 2 || !t.data.z_mag_shunt)) return null;
+              
+              return (
+                <Line
+                  key={t.id}
+                  type="monotone"
+                  dataKey={dataKey}
+                  name={t.name}
+                  stroke={t.color}
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls={true}
+                  isAnimationActive={false}
+                />
+              );
+            })}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    );
   };
 
   const renderActiveChart = () => {
     if (!result) return null;
     const currentPlot = result.plots[activePlotIdx];
     const hasS21 = result.data.n_ports >= 2;
+    const p1 = result.data.port1 ?? 1;
+    const p2 = result.data.port2 ?? 2;
+    const phase11Name = result.data.port1 !== undefined ? `S${p1}${p1} Phase` : 'S11 Phase';
+    const phase21Name = result.data.port2 !== undefined ? `S${p2}${p1} Phase` : 'S21 Phase';
+    const isZPlot = ['zmag_series', 'zmag_shunt', 'zmag'].includes(currentPlot.id);
 
-    if (['s11', 's21', 'phase', 'zmag'].includes(currentPlot.id)) {
+    if (['s11', 's21', 'phase', 'zmag_series', 'zmag_shunt', 'zmag'].includes(currentPlot.id)) {
       return (
         <div className="w-full h-[500px] bg-white dark:bg-zinc-950/50 rounded-xl p-4 border border-border shadow-inner animate-in fade-in zoom-in duration-300 relative group/chart">
           <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 text-center">
@@ -294,10 +566,16 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
               <CartesianGrid strokeDasharray="3 3" stroke="#888888" opacity={0.1} vertical={false} />
               <XAxis 
                 dataKey="freqMHz" 
+                type={isZPlot ? "number" : "category"}
+                scale={isZPlot ? "log" : "auto"}
+                domain={isZPlot ? ['dataMin', 'dataMax'] : undefined}
+                tickFormatter={(val) => {
+                  return typeof val === 'number' ? val.toFixed(2) : val;
+                }}
                 tick={{fontSize: 11, fill: '#666', fontWeight: 500}}
-                minTickGap={60}
+                minTickGap={isZPlot ? 30 : 60}
                 label={{
-                  value: t('sparam.chart.freq'), 
+                  value: 'Frequency (MHz)', 
                   position: 'insideBottom', 
                   offset: -15, 
                   fontSize: 13, 
@@ -307,16 +585,16 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
               />
               <YAxis 
                 tick={{fontSize: 11, fill: '#666', fontWeight: 500}}
-                domain={currentPlot.id === 'zmag' ? [0.1, 'auto'] : ['auto', 'auto']}
-                scale={currentPlot.id === 'zmag' ? 'log' : 'auto'}
+                domain={isZPlot ? [0.1, 'auto'] : ['auto', 'auto']}
+                scale={isZPlot ? 'log' : 'auto'}
                 tickFormatter={(val) => {
-                  if (currentPlot.id !== 'zmag') return val;
+                  if (!isZPlot) return val;
                   if (val >= 1000) return `${(val/1000).toFixed(1)}k`;
                   if (val < 1 && val > 0) return val.toFixed(1);
                   return Math.round(val).toString();
                 }}
                 label={{
-                  value: currentPlot.id === 'zmag' ? 'IMPEDANCIA (Ω)' : currentPlot.title.toUpperCase(), 
+                  value: isZPlot ? 'Impedance' : currentPlot.title.toUpperCase(), 
                   angle: -90, 
                   position: 'insideLeft', 
                   offset: -5,
@@ -356,7 +634,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
               
               {currentPlot.id === 's11' && (
                 <>
-                  <Line type="monotone" dataKey="s11" name="S11" stroke="#3b82f6" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
+                  <Line type="monotone" dataKey="s11" name={`S${p1}{p1}`} stroke="#3b82f6" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
                   {markers.map((m, i) => (
                     <React.Fragment key={i}>
                       <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
@@ -367,7 +645,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
               )}
               {currentPlot.id === 's21' && hasS21 && (
                 <>
-                  <Line type="monotone" dataKey="s21" name="S21" stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
+                  <Line type="monotone" dataKey="s21" name={`S${p2}{p1}`} stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
                   {markers.map((m, i) => (
                     <React.Fragment key={i}>
                       <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
@@ -378,8 +656,8 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
               )}
               {currentPlot.id === 'phase' && (
                 <>
-                  <Line type="monotone" dataKey="phase11" name={t('sparam.chart.phase_s11')} stroke="#3b82f6" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
-                  {hasS21 && <Line type="monotone" dataKey="phase21" name={t('sparam.chart.phase_s21')} stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />}
+                  <Line type="monotone" dataKey="phase11" name={phase11Name} stroke="#3b82f6" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
+                  {hasS21 && <Line type="monotone" dataKey="phase21" name={phase21Name} stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />}
                   {markers.map((m, i) => (
                     <React.Fragment key={i}>
                       <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
@@ -389,15 +667,38 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                   ))}
                 </>
               )}
-              {currentPlot.id === 'zmag' && (
+              {['zmag', 'zmag_series'].includes(currentPlot.id) && (
                 <>
-                  <Line type="monotone" dataKey="zMag" name={result.data.n_ports === 1 ? "|Z_in|" : "|Z_serie|"} stroke="#a855f7" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
-                  {result.data.n_ports > 1 && <Line type="monotone" dataKey="zMagShunt" name="|Z_paralelo|" stroke="#92400e" strokeWidth={2} strokeDasharray="5 5" dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />}
+                  <Line type="monotone" dataKey="zMag" name={result.data.n_ports === 1 ? "|Z_in|" : "|Z_series|"} stroke="#a855f7" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
+                  {minZMag !== null && (
+                    <ReferenceLine 
+                      y={minZMag} 
+                      stroke="black" 
+                      label={{ value: "ESR", fill: "black", position: "top", fontSize: 11, fontWeight: 'bold' }} 
+                    />
+                  )}
                   {markers.map((m, i) => (
                     <React.Fragment key={i}>
                       <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
                       <ReferenceDot x={m.freqMHz} y={m.zMag} r={4} fill="#a855f7" stroke="white" />
-                      {result.data.n_ports > 1 && <ReferenceDot x={m.freqMHz} y={m.zMagShunt} r={4} fill="#92400e" stroke="white" />}
+                    </React.Fragment>
+                  ))}
+                </>
+              )}
+              {currentPlot.id === 'zmag_shunt' && (
+                <>
+                  <Line type="monotone" dataKey="zMagShunt" name="|Z_shunt|" stroke="#92400e" strokeWidth={2.5} dot={false} isAnimationActive={false} activeDot={{ r: 5 }} />
+                  {minZMagShunt !== null && (
+                    <ReferenceLine 
+                      y={minZMagShunt} 
+                      stroke="black" 
+                      label={{ value: "ESR", fill: "black", position: "top", fontSize: 11, fontWeight: 'bold' }} 
+                    />
+                  )}
+                  {markers.map((m, i) => (
+                    <React.Fragment key={i}>
+                      <ReferenceLine x={m.freqMHz} stroke="#64748b" strokeDasharray="3 3" label={{ position: 'top', value: `M${i+1}`, fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
+                      <ReferenceDot x={m.freqMHz} y={m.zMagShunt} r={4} fill="#92400e" stroke="white" />
                     </React.Fragment>
                   ))}
                 </>
@@ -453,12 +754,12 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                         {(currentPlot.id === 's11' || currentPlot.id === 's21') && (
                           <>
                             <div className="flex justify-between">
-                              <span className="text-blue-500">S11:</span>
+                              <span className="text-blue-500">{`S${p1}${p1}:`}</span>
                               <span className="font-mono font-bold">{m.s11.toFixed(2)}</span>
                             </div>
                             {hasS21 && (
                               <div className="flex justify-between">
-                                <span className="text-red-500">S21:</span>
+                                <span className="text-red-500">{`S${p2}${p1}:`}</span>
                                 <span className="font-mono font-bold">{m.s21.toFixed(2)}</span>
                               </div>
                             )}
@@ -468,31 +769,29 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                         {currentPlot.id === 'phase' && (
                           <>
                             <div className="flex justify-between">
-                              <span className="text-blue-500">P11:</span>
+                              <span className="text-blue-500">{`P${p1}${p1}:`}</span>
                               <span className="font-mono font-bold">{m.phase11.toFixed(1)}°</span>
                             </div>
                             {hasS21 && (
                               <div className="flex justify-between">
-                                <span className="text-red-500">P21:</span>
+                                <span className="text-red-500">{`P${p2}${p1}:`}</span>
                                 <span className="font-mono font-bold">{m.phase21.toFixed(1)}°</span>
                               </div>
                             )}
                           </>
                         )}
                         
-                        {currentPlot.id === 'zmag' && (
-                          <>
-                            <div className="flex justify-between">
-                              <span className="text-purple-500">{result.data.n_ports === 1 ? '|Z_in|:' : '|Z_ser|:'}</span>
-                              <span className="font-mono font-bold">{m.zMag ? m.zMag.toFixed(2) : '-'} Ω</span>
-                            </div>
-                            {result.data.n_ports > 1 && (
-                              <div className="flex justify-between">
-                                <span className="text-amber-700">|Z_par|:</span>
-                                <span className="font-mono font-bold">{m.zMagShunt ? m.zMagShunt.toFixed(2) : '-'} Ω</span>
-                              </div>
-                            )}
-                          </>
+                        {['zmag', 'zmag_series'].includes(currentPlot.id) && (
+                          <div className="flex justify-between">
+                            <span className="text-purple-500">{result.data.n_ports === 1 ? '|Z_in|:' : '|Z_ser|:'}</span>
+                            <span className="font-mono font-bold">{m.zMag ? m.zMag.toFixed(2) : '-'} Ω</span>
+                          </div>
+                        )}
+                        {currentPlot.id === 'zmag_shunt' && (
+                          <div className="flex justify-between">
+                            <span className="text-amber-700">|Z_par|:</span>
+                            <span className="font-mono font-bold">{m.zMagShunt ? m.zMagShunt.toFixed(2) : '-'} Ω</span>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -509,7 +808,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
       <div className="relative w-full max-w-2xl bg-white dark:bg-zinc-900 rounded-xl shadow-xl border border-border p-4 overflow-hidden group animate-in fade-in zoom-in duration-300">
         <img 
           key={currentPlot.id}
-          src={`data:image/png;base64,${currentPlot.image}`} 
+          src={`data:image/svg+xml;base64,${currentPlot.image}`} 
           alt={currentPlot.title} 
           className="w-full h-auto object-contain max-h-[600px] rounded-lg"
         />
@@ -534,131 +833,223 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
     >
       <div className="space-y-6 text-zinc-900">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="flex flex-col">
+          {/* Column 1: Inputs */}
+          <div className="space-y-6">
+            <Card className="flex flex-col">
+              <CardHeader className="pb-3 text-zinc-900">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Library className="w-5 h-5 text-primary" />
+                    Biblioteca
+                  </CardTitle>
+                  <button onClick={fetchMeasurements} className="text-muted-foreground hover:text-primary p-1">
+                    <RefreshCw className="w-3 h-3" />
+                  </button>
+                </div>
+                <CardDescription>Mediciones guardadas en el servidor.</CardDescription>
+              </CardHeader>
+              <CardContent className="flex-1 space-y-4">
+                 <div className="space-y-2">
+                   <Label className="text-[10px] uppercase font-bold text-muted-foreground">VNA / Carpeta</Label>
+                   <Select value={device} onValueChange={setDevice}>
+                      <SelectTrigger className="bg-input-background h-8 text-xs">
+                        <SelectValue placeholder="Seleccionar dispositivo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="NanoVNA-Izan">NanoVNA-Izan</SelectItem>
+                        <SelectItem value="NanoVNA-LAB1">NanoVNA-LAB1</SelectItem>
+                        <SelectItem value="NanoVNA-LAB2">NanoVNA-LAB2</SelectItem>
+                      </SelectContent>
+                    </Select>
+                 </div>
+
+                 <div className="space-y-2">
+                   <Label className="text-[10px] uppercase font-bold text-muted-foreground">Componente</Label>
+                   <Select value={componentFilter} onValueChange={setComponentFilter}>
+                      <SelectTrigger className="bg-input-background h-8 text-xs">
+                        <SelectValue placeholder="Filtrar componente" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos</SelectItem>
+                        <SelectItem value="capacitor">Condensador</SelectItem>
+                        <SelectItem value="inductor">Bobina</SelectItem>
+                        <SelectItem value="resistor">Resistencia</SelectItem>
+                      </SelectContent>
+                    </Select>
+                 </div>
+                 
+                 <div className="space-y-2">
+                   <Label className="text-[10px] uppercase font-bold text-muted-foreground">Medición</Label>
+                   <Select value={selectedMeasName} onValueChange={handleMeasSelect}>
+                      <SelectTrigger className="bg-input-background">
+                        <SelectValue placeholder="Selecciona..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {measurements.map((m) => (
+                          <SelectItem key={m.name} value={m.name}>
+                            {m.component_type ? `${m.name} (${m.component_type})` : m.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {selectedMeasName && (
+                    <div className="text-[10px] text-muted-foreground italic px-1">
+                      Cargada: {selectedMeasName}
+                    </div>
+                  )}
+              </CardContent>
+            </Card>
+
+            <Card className="flex flex-col">
+              <CardHeader className="pb-3 text-zinc-900">
+                <CardTitle className="text-lg">{t('sparam.input.title')}</CardTitle>
+                <CardDescription>{t('sparam.input.desc')}</CardDescription>
+              </CardHeader>
+              <CardContent className="flex-1">
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={cn(
+                    "relative group cursor-pointer border-2 border-dashed rounded-xl p-4 h-full min-h-[100px] transition-all flex flex-col items-center justify-center gap-2",
+                    isDragging 
+                      ? "border-primary bg-primary/5 scale-[1.01]" 
+                      : "border-border hover:border-primary/50 hover:bg-muted/50"
+                  )}
+                >
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    accept=".s2p,.s1p,.ts"
+                    onChange={(e) => {
+                      if (e.target.files?.[0]) {
+                        setS2pFile(e.target.files[0]);
+                        setSelectedMeasName("");
+                      }
+                    }}
+                  />
+                  
+                  <div className={cn(
+                    "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
+                    s2pFile ? "bg-green-100 text-green-600" : "bg-primary/10 text-primary group-hover:bg-primary/20"
+                  )}>
+                    {s2pFile ? <FileCheck className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
+                  </div>
+
+                  <div className="text-center">
+                    <p className="text-[10px] font-medium max-w-[120px] truncate">
+                      {s2pFile ? s2pFile.name : t('sparam.drag.text')}
+                    </p>
+                  </div>
+
+                  {s2pFile && (
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setS2pFile(null);
+                      }}
+                      className="absolute top-1 right-1 text-[10px] text-muted-foreground hover:text-destructive p-1"
+                    >
+                      {t('sparam.drag.remove')}
+                    </button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Column 2: Loaded Traces */}
+          <Card className="flex flex-col h-full border border-border">
             <CardHeader className="pb-3 text-zinc-900">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg flex items-center gap-2">
-                  <Library className="w-5 h-5 text-primary" />
-                  Biblioteca
+                  <Activity className="w-5 h-5 text-primary" />
+                  Trazas Cargadas
                 </CardTitle>
-                <button onClick={fetchMeasurements} className="text-muted-foreground hover:text-primary p-1">
-                  <RefreshCw className="w-3 h-3" />
-                </button>
-              </div>
-              <CardDescription>Mediciones guardadas en el servidor.</CardDescription>
-            </CardHeader>
-            <CardContent className="flex-1 space-y-4">
-               <div className="space-y-2">
-                 <Label className="text-[10px] uppercase font-bold text-muted-foreground">VNA / Carpeta</Label>
-                 <Select value={device} onValueChange={setDevice}>
-                    <SelectTrigger className="bg-input-background h-8 text-xs">
-                      <SelectValue placeholder="Seleccionar dispositivo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="NanoVNA-Izan">NanoVNA-Izan</SelectItem>
-                      <SelectItem value="NanoVNA-LAB1">NanoVNA-LAB1</SelectItem>
-                      <SelectItem value="NanoVNA-LAB2">NanoVNA-LAB2</SelectItem>
-                    </SelectContent>
-                  </Select>
-               </div>
-
-               <div className="space-y-2">
-                 <Label className="text-[10px] uppercase font-bold text-muted-foreground">Componente</Label>
-                 <Select value={componentFilter} onValueChange={setComponentFilter}>
-                    <SelectTrigger className="bg-input-background h-8 text-xs">
-                      <SelectValue placeholder="Filtrar componente" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
-                      <SelectItem value="capacitor">Condensador</SelectItem>
-                      <SelectItem value="inductor">Bobina</SelectItem>
-                      <SelectItem value="resistor">Resistencia</SelectItem>
-                    </SelectContent>
-                  </Select>
-               </div>
-               
-               <div className="space-y-2">
-                 <Label className="text-[10px] uppercase font-bold text-muted-foreground">Medición</Label>
-                 <Select value={selectedMeasName} onValueChange={handleMeasSelect}>
-                    <SelectTrigger className="bg-input-background">
-                      <SelectValue placeholder="Selecciona..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {measurements.map((m) => (
-                        <SelectItem key={m.name} value={m.name}>
-                          {m.component_type ? `${m.name} (${m.component_type})` : m.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {selectedMeasName && (
-                  <div className="text-[10px] text-muted-foreground italic px-1">
-                    Cargada: {selectedMeasName}
-                  </div>
-                )}
-            </CardContent>
-          </Card>
-
-          <Card className="flex flex-col">
-            <CardHeader className="pb-3 text-zinc-900">
-              <CardTitle className="text-lg">{t('sparam.input.title')}</CardTitle>
-              <CardDescription>{t('sparam.input.desc')}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex-1">
-              <div
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={cn(
-                  "relative group cursor-pointer border-2 border-dashed rounded-xl p-4 h-full min-h-[100px] transition-all flex flex-col items-center justify-center gap-2",
-                  isDragging 
-                    ? "border-primary bg-primary/5 scale-[1.01]" 
-                    : "border-border hover:border-primary/50 hover:bg-muted/50"
-                )}
-              >
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  className="hidden"
-                  accept=".s2p,.s1p,.ts"
-                  onChange={(e) => {
-                    if (e.target.files?.[0]) {
-                      setS2pFile(e.target.files[0]);
-                      setSelectedMeasName("");
-                    }
-                  }}
-                />
-                
-                <div className={cn(
-                  "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
-                  s2pFile ? "bg-green-100 text-green-600" : "bg-primary/10 text-primary group-hover:bg-primary/20"
-                )}>
-                  {s2pFile ? <FileCheck className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
-                </div>
-
-                <div className="text-center">
-                  <p className="text-[10px] font-medium max-w-[120px] truncate">
-                    {s2pFile ? s2pFile.name : t('sparam.drag.text')}
-                  </p>
-                </div>
-
-                {s2pFile && (
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setS2pFile(null);
+                {traces.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setTraces([]);
+                      setActiveTraceId(null);
                     }}
-                    className="absolute top-1 right-1 text-[10px] text-muted-foreground hover:text-destructive p-1"
+                    className="text-[10px] font-bold text-muted-foreground hover:text-destructive transition-colors uppercase tracking-wider px-1.5 py-0.5 rounded hover:bg-destructive/5"
                   >
-                    {t('sparam.drag.remove')}
+                    Limpiar todo
                   </button>
                 )}
               </div>
+              <CardDescription>Habilita, selecciona o elimina trazas.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 space-y-2 max-h-[360px] overflow-y-auto pr-1 custom-scrollbar">
+              {traces.length === 0 ? (
+                <div className="h-full min-h-[150px] flex flex-col items-center justify-center text-center p-4">
+                  <p className="text-xs text-muted-foreground italic">No hay trazas cargadas.</p>
+                  <p className="text-[10px] text-muted-foreground/60 mt-1 max-w-[150px]">
+                    Carga un archivo de la biblioteca o local para comenzar.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {traces.map((t) => (
+                    <div 
+                      key={t.id}
+                      className={cn(
+                        "flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all duration-200 group/trace",
+                        activeTraceId === t.id 
+                          ? "border-primary bg-primary/5 shadow-md shadow-primary/5 scale-[1.01]" 
+                          : "border-border hover:border-primary/20 hover:bg-muted/30"
+                      )}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={t.visible}
+                          onChange={() => {
+                            setTraces(prev => prev.map(curr => curr.id === t.id ? { ...curr, visible: !curr.visible } : curr));
+                          }}
+                          className="rounded border-zinc-300 text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                        />
+                        <button
+                          onClick={() => cycleColor(t.id)}
+                          className="w-3.5 h-3.5 rounded-full border border-black/10 shrink-0 cursor-pointer transition-transform hover:scale-110 shadow-inner"
+                          style={{ backgroundColor: t.color }}
+                          title="Cambiar color"
+                        />
+                        <span 
+                          onClick={() => {
+                            setActiveTraceId(t.id);
+                            setViewMode('individual');
+                          }}
+                          className={cn(
+                            "font-bold truncate cursor-pointer transition-colors flex-1 text-zinc-900 select-none",
+                            activeTraceId === t.id ? "text-primary" : "hover:text-primary animate-pulse-slow"
+                          )}
+                          title={t.name}
+                        >
+                          {t.name}
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center gap-1 opacity-0 group-hover/trace:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => removeTrace(t.id)}
+                          className="p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
+          {/* Column 3: Outputs */}
           <Card className="flex flex-col">
             <CardHeader className="pb-3 text-zinc-900">
               <CardTitle className="text-lg">{t('sparam.output.title')}</CardTitle>
@@ -688,12 +1079,16 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
             {result ? (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="flex flex-col border-l-2 border-primary/20 pl-4">
-                  <p className="text-[10px] text-muted-foreground uppercase font-bold text-zinc-900">{t('sparam.summary.min_s11')}</p>
+                  <p className="text-[10px] text-muted-foreground uppercase font-bold text-zinc-900">
+                    {t('sparam.summary.min_s11').replace('S11', `S${result.data.port1 ?? 1}${result.data.port1 ?? 1}`)}
+                  </p>
                   <p className="text-2xl font-mono font-bold text-primary">{result.summary.min_s11.toFixed(2)} dB</p>
                 </div>
                 {result.data.n_ports >= 2 && result.summary.max_s21 !== null && (
                   <div className="flex flex-col border-l-2 border-primary/20 pl-4">
-                    <p className="text-[10px] text-muted-foreground uppercase font-bold text-zinc-900">{t('sparam.summary.max_s21')}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold text-zinc-900">
+                      {t('sparam.summary.max_s21').replace('S21', `S${result.data.port2 ?? 2}${result.data.port1 ?? 1}`)}
+                    </p>
                     <p className="text-2xl font-mono font-bold text-primary">{result.summary.max_s21.toFixed(2)} dB</p>
                   </div>
                 )}
@@ -711,22 +1106,59 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
         </Card>
 
         <Card className="w-full flex flex-col overflow-hidden min-h-[500px]">
-          <CardHeader className="flex flex-row items-center justify-between border-b border-border/50 bg-muted/10 px-6 py-4">
+          <CardHeader className="flex flex-col md:flex-row md:items-center justify-between border-b border-border/50 bg-muted/10 px-6 py-4 gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-zinc-900">
                 <CardTitle className="text-xl">{t('sparam.plots.title')}</CardTitle>
-                {result && ['mag', 'phase', 'vswr'].includes(result.plots[activePlotIdx].id) && (
+                {viewMode === 'individual' && result && ['mag', 'phase', 'zmag'].includes(result.plots[activePlotIdx].id) && (
                   <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tight flex items-center gap-1">
                     <ChartIcon className="w-3 h-3" /> {t('sparam.plots.dynamic')}
                   </span>
                 )}
+                {viewMode === 'comparison' && (
+                  <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tight flex items-center gap-1">
+                    <Activity className="w-3 h-3" /> Comparación
+                  </span>
+                )}
               </div>
               <CardDescription>
-                {result ? t('sparam.plots.desc_result', result.plots[activePlotIdx].title) : t('sparam.plots.desc_idle')}
+                {viewMode === 'comparison' 
+                  ? "Visualiza y compara múltiples trazas superpuestas en tiempo real."
+                  : result 
+                    ? t('sparam.plots.desc_result', result.plots[activePlotIdx].title) 
+                    : t('sparam.plots.desc_idle')}
               </CardDescription>
             </div>
-            {result && (
-              <div className="flex items-center gap-3">
+            
+            {traces.length >= 2 && (
+              <div className="flex items-center bg-zinc-200/50 dark:bg-zinc-800/50 p-1 rounded-xl border border-border shadow-inner shrink-0">
+                <button
+                  onClick={() => setViewMode('individual')}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 cursor-pointer select-none",
+                    viewMode === 'individual'
+                      ? "bg-white text-zinc-900 shadow-sm"
+                      : "text-muted-foreground hover:text-zinc-900"
+                  )}
+                >
+                  Vista Individual
+                </button>
+                <button
+                  onClick={() => setViewMode('comparison')}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 cursor-pointer select-none",
+                    viewMode === 'comparison'
+                      ? "bg-white text-zinc-900 shadow-sm"
+                      : "text-muted-foreground hover:text-zinc-900"
+                  )}
+                >
+                  Comparar Trazas ({traces.length})
+                </button>
+              </div>
+            )}
+
+            {viewMode === 'individual' && result && (
+              <div className="flex items-center gap-3 shrink-0">
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -734,7 +1166,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                   className="h-9 gap-2 px-4 shadow-sm"
                 >
                   <Download className="w-4 h-4 text-primary" />
-                  <span className="font-semibold text-xs text-zinc-900">{t('sparam.plots.export_png')}</span>
+                  <span className="font-semibold text-xs text-zinc-900">{t('sparam.plots.export_svg')}</span>
                 </Button>
                 <div className="flex items-center bg-background rounded-lg p-1 border border-border shadow-sm">
                   <Button 
@@ -777,9 +1209,137 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                   <p className="text-muted-foreground animate-pulse text-sm">{t('sparam.loading.desc')}</p>
                 </div>
               </div>
+            ) : viewMode === 'comparison' ? (
+              <div className="w-full flex-1 flex flex-col space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* Comparison parameter selector */}
+                <div className="flex flex-wrap gap-2 justify-center bg-zinc-200/30 p-1.5 rounded-2xl border border-border/55 max-w-fit mx-auto shadow-inner">
+                  <button
+                    onClick={() => setComparisonParam('s11')}
+                    className={cn(
+                      "px-3.5 py-1.5 text-xs font-black rounded-xl cursor-pointer select-none transition-all duration-200",
+                      comparisonParam === 's11' ? "bg-primary text-white shadow-md shadow-primary/20 scale-[1.03]" : "text-muted-foreground hover:text-zinc-900"
+                    )}
+                  >
+                    S11 Mag (dB)
+                  </button>
+                  <button
+                    onClick={() => setComparisonParam('s21')}
+                    disabled={!hasAnyS21}
+                    className={cn(
+                      "px-3.5 py-1.5 text-xs font-black rounded-xl cursor-pointer select-none transition-all duration-200",
+                      !hasAnyS21 ? "opacity-40 cursor-not-allowed" : "",
+                      comparisonParam === 's21' ? "bg-primary text-white shadow-md shadow-primary/20 scale-[1.03]" : "text-muted-foreground hover:text-zinc-900"
+                    )}
+                    title={!hasAnyS21 ? "No visible trace has 2 ports" : ""}
+                  >
+                    S21 Mag (dB)
+                  </button>
+                  <button
+                    onClick={() => setComparisonParam('phase11')}
+                    className={cn(
+                      "px-3.5 py-1.5 text-xs font-black rounded-xl cursor-pointer select-none transition-all duration-200",
+                      comparisonParam === 'phase11' ? "bg-primary text-white shadow-md shadow-primary/20 scale-[1.03]" : "text-muted-foreground hover:text-zinc-900"
+                    )}
+                  >
+                    S11 Phase (°)
+                  </button>
+                  <button
+                    onClick={() => setComparisonParam('phase21')}
+                    disabled={!hasAnyS21}
+                    className={cn(
+                      "px-3.5 py-1.5 text-xs font-black rounded-xl cursor-pointer select-none transition-all duration-200",
+                      !hasAnyS21 ? "opacity-40 cursor-not-allowed" : "",
+                      comparisonParam === 'phase21' ? "bg-primary text-white shadow-md shadow-primary/20 scale-[1.03]" : "text-muted-foreground hover:text-zinc-900"
+                    )}
+                    title={!hasAnyS21 ? "No visible trace has 2 ports" : ""}
+                  >
+                    S21 Phase (°)
+                  </button>
+                  <button
+                    onClick={() => setComparisonParam('vswr')}
+                    className={cn(
+                      "px-3.5 py-1.5 text-xs font-black rounded-xl cursor-pointer select-none transition-all duration-200",
+                      comparisonParam === 'vswr' ? "bg-primary text-white shadow-md shadow-primary/20 scale-[1.03]" : "text-muted-foreground hover:text-zinc-900"
+                    )}
+                  >
+                    VSWR
+                  </button>
+                  <button
+                    onClick={() => setComparisonParam('zmag_series')}
+                    className={cn(
+                      "px-3.5 py-1.5 text-xs font-black rounded-xl cursor-pointer select-none transition-all duration-200",
+                      comparisonParam === 'zmag_series' ? "bg-primary text-white shadow-md shadow-primary/20 scale-[1.03]" : "text-muted-foreground hover:text-zinc-900"
+                    )}
+                  >
+                    Series Impedance |Z_series|
+                  </button>
+                  <button
+                    onClick={() => setComparisonParam('zmag_shunt')}
+                    disabled={!hasAnyS21}
+                    className={cn(
+                      "px-3.5 py-1.5 text-xs font-black rounded-xl cursor-pointer select-none transition-all duration-200",
+                      !hasAnyS21 ? "opacity-40 cursor-not-allowed" : "",
+                      comparisonParam === 'zmag_shunt' ? "bg-primary text-white shadow-md shadow-primary/20 scale-[1.03]" : "text-muted-foreground hover:text-zinc-900"
+                    )}
+                    title={!hasAnyS21 ? "No visible trace has 2 ports" : ""}
+                  >
+                    Shunt Impedance |Z_shunt|
+                  </button>
+                </div>
+
+                {renderComparisonChart()}
+
+                {/* Comparison Summary Table */}
+                <div className="w-full bg-white dark:bg-zinc-900 border border-border/60 rounded-2xl p-4 shadow-sm">
+                  <h4 className="text-[10px] uppercase font-black text-muted-foreground tracking-wider mb-3 select-none">Resumen de Comparación</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead>
+                        <tr className="border-b border-border text-[10px] text-muted-foreground uppercase font-black">
+                          <th className="py-2.5">Traza</th>
+                          <th className="py-2.5 text-right">Rango de Freq (MHz)</th>
+                          <th className="py-2.5 text-right">Valor Mínimo</th>
+                          <th className="py-2.5 text-right">Valor Máximo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {traces.filter(t => t.visible).map(t => {
+                          let valArray: number[] = [];
+                          if (comparisonParam === 's11') valArray = t.data.s11_db;
+                          else if (comparisonParam === 's21') valArray = t.data.s21_db || [];
+                          else if (comparisonParam === 'phase11') valArray = t.data.s11_phase;
+                          else if (comparisonParam === 'phase21') valArray = t.data.s21_phase || [];
+                          else if (comparisonParam === 'vswr') valArray = t.data.vswr;
+                          else if (comparisonParam === 'zmag_series') valArray = t.data.z_mag || [];
+                          else if (comparisonParam === 'zmag_shunt') valArray = t.data.z_mag_shunt || [];
+                          
+                          const validVals = valArray.filter((v: number) => v !== null && isFinite(v));
+                          const minVal = validVals.length ? Math.min(...validVals).toFixed(2) : 'N/A';
+                          const maxVal = validVals.length ? Math.max(...validVals).toFixed(2) : 'N/A';
+                          const unitStr = ['s11', 's21'].includes(comparisonParam) ? ' dB' : ['phase11', 'phase21'].includes(comparisonParam) ? '°' : ['zmag_series', 'zmag_shunt'].includes(comparisonParam) ? ' Ω' : '';
+                          
+                          const fMin = (Math.min(...t.data.freq_hz) / 1e6).toFixed(1);
+                          const fMax = (Math.max(...t.data.freq_hz) / 1e6).toFixed(1);
+                          
+                          return (
+                            <tr key={t.id} className="border-b border-border/40 hover:bg-muted/10 transition-colors">
+                              <td className="py-2.5 font-bold flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full shrink-0 shadow-inner" style={{ backgroundColor: t.color }} />
+                                <span className="truncate max-w-[200px]" title={t.name}>{t.name}</span>
+                              </td>
+                              <td className="py-2.5 text-right font-mono text-muted-foreground">{fMin} - {fMax} ({t.data.freq_hz.length} pts)</td>
+                              <td className="py-2.5 text-right font-mono font-bold text-zinc-900">{minVal}{unitStr}</td>
+                              <td className="py-2.5 text-right font-mono font-bold text-zinc-900">{maxVal}{unitStr}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
             ) : result ? (
               <div className="w-full flex-1 flex flex-col items-center justify-center animate-in fade-in slide-in-from-bottom-4 duration-500">
-                
                 {renderActiveChart()}
 
                 <div 

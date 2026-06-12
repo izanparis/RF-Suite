@@ -329,6 +329,7 @@ def start_calibration(vna, start_hz, stop_hz, points, device_type="NanoVNA"):
         
         # Configurar el barrido
         vna.set_sweep(start_hz, stop_hz, points)
+        vna.sweep_frequencies = np.linspace(start_hz, stop_hz, points)
         print(f"Sweep set to {start_hz} - {stop_hz} Hz with {points} points.")
         
         return {"status": "Calibration started and dataset reset"}
@@ -342,8 +343,19 @@ def calibrate_step(vna, step: str):
         if hasattr(vna, 'iface') and hasattr(vna.iface, 'reset_input_buffer'):
             vna.iface.reset_input_buffer()
         
-        # Realizar el paso de calibración
-        vna.calibration_step(step)
+        # Adquirir trazas del sweep
+        s11, s21, frequencies = vna.sweep()
+        
+        # Alinear frecuencias para evitar descuadres por jitter serial o redondeo
+        if hasattr(vna, 'sweep_frequencies') and len(frequencies) == len(vna.sweep_frequencies):
+            frequencies = vna.sweep_frequencies
+            
+        frequencies_int = np.round(frequencies).astype(int)
+        
+        # Guardar en el objeto de calibración
+        vna.calibration.calibration_step(step, s11, s21, frequencies_int)
+        if step == "through":
+            vna.calibration.calibration_step("thrurefl", s11, s21, frequencies_int)
         
         # Loggear info del dataset actual
         if hasattr(vna, 'calibration') and hasattr(vna.calibration, 'dataset'):
@@ -359,7 +371,40 @@ def calibrate_step(vna, step: str):
                     count += 1
             print(f"Valid points for {step}: {count}/{points}")
             
-        return {"status": f"Step {step} completed"}
+        # Calcular magnitudes en dB para graficar
+        s11_arr = np.asarray(s11)
+        s21_arr = np.asarray(s21) if s21 is not None else None
+        
+        if step == "through" and s21_arr is not None:
+            trace_db = 20 * np.log10(np.maximum(np.abs(s21_arr), 1e-12))
+            label = "S21 (dB)"
+            color = "red"
+        else:
+            trace_db = 20 * np.log10(np.maximum(np.abs(s11_arr), 1e-12))
+            label = "S11 (dB)"
+            color = "blue"
+            
+        # Generar gráfico simple
+        plt.figure(figsize=(6, 3))
+        plt.plot(frequencies_int/1e6, trace_db, label=label, color=color, linewidth=1.5)
+        plt.title(f"Medición Estándar: {step.upper()}")
+        plt.xlabel("Frecuencia (MHz)")
+        plt.ylabel("Magnitud (dB)")
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+        buf.seek(0)
+        plot_base64 = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close()
+        
+        return {
+            "status": f"Step {step} completed",
+            "freqs": (frequencies_int / 1e6).tolist(),
+            "db_data": trace_db.tolist(),
+            "plot": plot_base64
+        }
     except Exception as e:
         print(f"Error during calibration step '{step}': {str(e)}")
         import traceback

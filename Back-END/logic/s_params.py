@@ -8,6 +8,26 @@ import os
 matplotlib.use('Agg')
 
 def process_s_params_touchstone(file_content, filename):
+    # Check for port mapping comments
+    p1 = 1
+    p2 = 2
+    try:
+        lines = file_content.decode('utf-8', errors='ignore').split('\n')
+        for line in lines:
+            line_str = line.strip()
+            if line_str.startswith('!'):
+                if "Port Mapping:" in line_str:
+                    import re
+                    m1 = re.search(r'Port 1\s*=\s*Physical Port\s*(\d+)', line_str)
+                    m2 = re.search(r'Port 2\s*=\s*Physical Port\s*(\d+)', line_str)
+                    if m1:
+                        p1 = int(m1.group(1))
+                    if m2:
+                        p2 = int(m2.group(1))
+                    break
+    except Exception as e:
+        print(f"Error parsing port mapping from touchstone file: {e}")
+
     # Save to a temporary file for skrf to read
     temp_path = f"temp_analysis_{filename}"
     with open(temp_path, "wb") as f:
@@ -37,23 +57,20 @@ def process_s_params_touchstone(file_content, filename):
         
         # 3. Calculate Impedance based on port count
         if n_ports == 1:
-            # For 1-port, Z is the input impedance Zin
-            z_data = ntw.z[:, 0, 0]
+            s11_complex = ntw.s[:, 0, 0]
+            z_data = 50.0 * (1.0 + s11_complex) / (1.0 - s11_complex + 1e-30)
             z_mag = np.maximum(np.abs(z_data), 1e-12)
             z_mag_shunt = None
         else:
-            # For 2-port, extract Series Z and Shunt Z from ABCD parameters
-            abcd = ntw.a
-            # Z_series = B
-            z_series = abcd[:, 0, 1]
+            s21_complex = ntw.s[:, 1, 0]
+            z_series = 100.0 * (1.0 - s21_complex) / (s21_complex + 1e-30)
             z_mag = np.maximum(np.abs(z_series), 1e-12)
-            # Y_shunt = C => Z_shunt = 1/C
-            y_shunt = abcd[:, 1, 0]
-            z_mag_shunt = np.maximum(np.abs(1.0 / (y_shunt + 1e-30)), 1e-12)
+            z_shunt = 25.0 * s21_complex / (1.0 - s21_complex + 1e-30)
+            z_mag_shunt = np.maximum(np.abs(z_shunt), 1e-12)
 
         def get_base64_plot(fig):
             buf = io.BytesIO()
-            fig.savefig(buf, format='png', dpi=150)
+            fig.savefig(buf, format='svg')
             buf.seek(0)
             return base64.b64encode(buf.read()).decode('utf-8')
 
@@ -61,76 +78,102 @@ def process_s_params_touchstone(file_content, filename):
 
         # --- Plot 1: S11 (dB) ---
         fig1 = plt.figure(figsize=(10, 6))
-        plt.plot(freq_mhz, s11_db, label='S11 (dB)', color='#3b82f6', linewidth=1.5)
-        plt.title(f'Magnitud S11 - {filename}')
-        plt.xlabel('Frecuencia (MHz)')
-        plt.ylabel('Magnitud (dB)')
+        plt.plot(freq_mhz, s11_db, label=f'S{p1}{p1} (dB)', color='#3b82f6', linewidth=1.5)
+        plt.title(f'S{p1}{p1} Magnitude - {filename}')
+        plt.xlabel('Frequency (MHz)')
+        plt.ylabel('Magnitude (dB)')
+        plt.xlim(np.min(freq_mhz), np.max(freq_mhz))
         plt.grid(True, alpha=0.3)
         plt.legend()
         plot_s11 = get_base64_plot(fig1)
-        plots.append({"id": "s11", "title": "S11 (dB)", "image": plot_s11})
+        plots.append({"id": "s11", "title": f"S{p1}{p1} Magnitude", "image": plot_s11})
         plt.close(fig1)
 
         # --- Plot 2: S21 (dB) ---
         if has_s21:
             fig2 = plt.figure(figsize=(10, 6))
-            plt.plot(freq_mhz, s21_db, label='S21 (dB)', color='#ef4444', linewidth=1.5)
-            plt.title(f'Magnitud S21 - {filename}')
-            plt.xlabel('Frecuencia (MHz)')
-            plt.ylabel('Magnitud (dB)')
+            plt.plot(freq_mhz, s21_db, label=f'S{p2}{p1} (dB)', color='#ef4444', linewidth=1.5)
+            plt.title(f'S{p2}{p1} Magnitude - {filename}')
+            plt.xlabel('Frequency (MHz)')
+            plt.ylabel('Magnitude (dB)')
+            plt.xlim(np.min(freq_mhz), np.max(freq_mhz))
             plt.grid(True, alpha=0.3)
             plt.legend()
             plot_s21 = get_base64_plot(fig2)
-            plots.append({"id": "s21", "title": "S21 (dB)", "image": plot_s21})
+            plots.append({"id": "s21", "title": f"S{p2}{p1} Magnitude", "image": plot_s21})
             plt.close(fig2)
 
-        # --- Plot 3: Impedance Magnitude (LOG-LOG) ---
-        fig_z = plt.figure(figsize=(10, 6))
+        # --- Plot 3a: Series Impedance Magnitude (LOG-LOG) ---
+        fig_z_series = plt.figure(figsize=(10, 6))
         if n_ports == 1:
             plt.loglog(freq_mhz, z_mag, color='purple', label='|Z_in| (Ohm)', linewidth=1.5)
-            plt.title(f'Magnitud Impedancia de Entrada |Z_in| - {filename}')
+            plt.title(f'|Z| - {filename}')
         else:
-            plt.loglog(freq_mhz, z_mag, color='purple', label='|Z_serie| (Ohm)', linewidth=1.5)
-            plt.loglog(freq_mhz, z_mag_shunt, color='brown', label='|Z_paralelo| (Ohm)', linestyle='--', linewidth=1.5)
-            plt.title(f'Magnitud de Impedancia Extraída |Z| - {filename}')
+            plt.loglog(freq_mhz, z_mag, color='purple', label='|Z_series| (Ohm)', linewidth=1.5)
+            plt.title(f'|Z| Series - {filename}')
         
-        plt.xlabel('Frecuencia (MHz)')
-        plt.ylabel(r'Impedancia ($\Omega$)')
+        # Add ESR line with slope 0 (minimum of the function), solid and black, labeled 'ESR'
+        min_val_ser = float(np.min(z_mag))
+        plt.axhline(y=min_val_ser, color='k', linestyle='-', linewidth=1, label='ESR')
+        
+        plt.xlabel('Frequency (MHz)')
+        plt.ylabel('Impedance')
+        plt.xlim(np.min(freq_mhz), np.max(freq_mhz))
         plt.grid(True, which="both", ls="-", alpha=0.2)
         plt.legend()
-        plot_zmag = get_base64_plot(fig_z)
-        plots.append({"id": "zmag", "title": "Impedancia |Z|", "image": plot_zmag})
-        plt.close(fig_z)
+        plot_z_series = get_base64_plot(fig_z_series)
+        plots.append({"id": "zmag_series", "title": "|Z| Series" if n_ports > 1 else "|Z|", "image": plot_z_series})
+        plt.close(fig_z_series)
+
+        # --- Plot 3b: Shunt Impedance Magnitude (LOG-LOG) ---
+        if n_ports > 1:
+            fig_z_shunt = plt.figure(figsize=(10, 6))
+            plt.loglog(freq_mhz, z_mag_shunt, color='brown', label='|Z_shunt| (Ohm)', linestyle='-', linewidth=1.5)
+            plt.title(f'|Z| Shunt - {filename}')
+            
+            # Add ESR line with slope 0 (minimum of the function), solid and black, labeled 'ESR'
+            min_val_sh = float(np.min(z_mag_shunt))
+            plt.axhline(y=min_val_sh, color='k', linestyle='-', linewidth=1, label='ESR')
+            
+            plt.xlabel('Frequency (MHz)')
+            plt.ylabel('Impedance')
+            plt.xlim(np.min(freq_mhz), np.max(freq_mhz))
+            plt.grid(True, which="both", ls="-", alpha=0.2)
+            plt.legend()
+            plot_z_shunt = get_base64_plot(fig_z_shunt)
+            plots.append({"id": "zmag_shunt", "title": "|Z| Shunt", "image": plot_z_shunt})
+            plt.close(fig_z_shunt)
 
         # --- Plot 4: Phase ---
         fig3 = plt.figure(figsize=(10, 6))
-        plt.plot(freq_mhz, s11_deg, label='S11 Phase (°)', linewidth=1.5)
+        plt.plot(freq_mhz, s11_deg, label=f'S{p1}{p1} Phase (deg)', linewidth=1.5)
         if has_s21:
-            plt.plot(freq_mhz, s21_deg, label='S21 Phase (°)', linewidth=1.5)
-        plt.title(f'Fase de Parámetros S - {filename}')
-        plt.xlabel('Frecuencia (MHz)')
-        plt.ylabel('Fase (grados)')
+            plt.plot(freq_mhz, s21_deg, label=f'S{p2}{p1} Phase (deg)', linewidth=1.5)
+        plt.title(f'S-Parameters Phase - {filename}')
+        plt.xlabel('Frequency (MHz)')
+        plt.ylabel('Phase (degrees)')
+        plt.xlim(np.min(freq_mhz), np.max(freq_mhz))
         plt.grid(True, alpha=0.3)
         plt.legend()
         plot_phase = get_base64_plot(fig3)
-        plots.append({"id": "phase", "title": "Fase (grados)", "image": plot_phase})
+        plots.append({"id": "phase", "title": "Phase (degrees)", "image": plot_phase})
         plt.close(fig3)
 
         # --- Plot 5: Smith Chart S11 ---
         fig4 = plt.figure(figsize=(8, 8))
-        ntw.plot_s_smith(m=0, n=0, label='S11')
-        plt.title(f'Diagrama de Smith S11 - {filename}')
+        ntw.plot_s_smith(m=0, n=0, label=f'S{p1}{p1}')
+        plt.title(f'Smith Chart S{p1}{p1} - {filename}')
         plot_smith_s11 = get_base64_plot(fig4)
-        plots.append({"id": "smith11", "title": "Smith S11", "image": plot_smith_s11})
+        plots.append({"id": "smith11", "title": f"Smith Chart S{p1}{p1}", "image": plot_smith_s11})
         plt.close(fig4)
 
         # --- Plot 6: Smith Chart S21 (only if 2 ports) ---
         if has_s21:
             fig5 = plt.figure(figsize=(8, 8))
-            ntw.plot_s_smith(m=1, n=0, label='S21')
-            plt.title(f'Diagrama de Smith S21 - {filename}')
+            ntw.plot_s_smith(m=1, n=0, label=f'S{p2}{p1}')
+            plt.title(f'Smith Chart S{p2}{p1} - {filename}')
             plot_smith_s21 = get_base64_plot(fig5)
-            plots.append({"id": "smith21", "title": "Smith S21", "image": plot_smith_s21})
+            plots.append({"id": "smith21", "title": f"Smith Chart S{p2}{p1}", "image": plot_smith_s21})
             plt.close(fig5)
 
         # --- ZIP Generation ---
@@ -138,7 +181,7 @@ def process_s_params_touchstone(file_content, filename):
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for p in plots:
-                zip_file.writestr(f"{p['id']}_{filename}.png", base64.b64decode(p['image']))
+                zip_file.writestr(f"{p['id']}_{filename}.svg", base64.b64decode(p['image']))
             
             # Add CSV data
             header = "Freq_Hz,S11_dB,S11_Phase,VSWR,Return_Loss_dB"
@@ -172,7 +215,9 @@ def process_s_params_touchstone(file_content, filename):
             "vswr": vswr.tolist(),
             "return_loss": return_loss.tolist(),
             "z_mag": z_mag.tolist(),
-            "n_ports": n_ports
+            "n_ports": n_ports,
+            "port1": p1,
+            "port2": p2
         }
         if n_ports > 1:
             result_data["z_mag_shunt"] = z_mag_shunt.tolist()

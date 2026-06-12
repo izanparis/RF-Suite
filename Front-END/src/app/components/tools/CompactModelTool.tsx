@@ -111,7 +111,7 @@ export function CompactModelTool() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               measurement_relative_path: relativePath,
-              tool_name: 'compact_model',
+              tool_name: method === 'vf' ? 'compact_model_vf' : 'compact_model_shunt',
               results: {
                 summary: {
                   method: data.summary.method || method,

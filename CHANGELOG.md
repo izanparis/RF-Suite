@@ -4,6 +4,61 @@ Todos los cambios notables en este proyecto serán documentados en este archivo.
 
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.0] - 2026-05-25
+
+### Añadido
+- **Integración Completa del VNA Agilent E5071C ENA**:
+    - Nuevo driver de hardware de producción [e5071c.py](file:///c:/Users/izan1/Desktop/RF_Tool_Suite/Back-END/logic/e5071c.py) que hereda la estructura de control de instrumentos heredados e implementa el protocolo SCPI completo vía TCP/IP (VISA sockets).
+    - Soporte para calibraciones vectoriales avanzadas de 1 puerto (SOL) y 2 puertos (SOLT) con selección de puertos arbitraria (1-4).
+    - Configuración nativa del hardware: promedio de señal (Averaging) configurable de 1 a 999 con limpieza de acumulador de barridos y filtros de suavizado (Smoothing) basados en porcentaje del span.
+    - Soporte nativo para barridos lineales (LIN) y logarítmicos (LOG) directamente procesados en el DSP del instrumento.
+    - Modos de captura de datos de alta velocidad leyendo la memoria interna de trazas SDAT en formato ASCII complejo (parejas Real/Imaginario) y soporte para barrido único (`:TRIG:SING`).
+    - Flujo robusto de guardado y carga de calibraciones mediante persistencia de archivos de estado binarios del instrumento (`.sta`) transferidos en bloques binarios base64 encapsulados en JSON.
+- **Nuevos Endpoints en el Servidor API (`main.py`)**:
+    - `/api/vna/e5071c/setup`: Configuración de acondicionamiento de señal del hardware.
+    - `/api/vna/e5071c/calibrate/start`: Inicialización de secuencias SOL/SOLT.
+    - `/api/vna/e5071c/calibrate/measure`: Adquisición de estándares OPEN, SHORT, LOAD, THRU por canal.
+    - `/api/vna/e5071c/calibrate/compute`: Compilación y almacenamiento de coeficientes de error.
+    - `/api/vna/e5071c/export` y `/api/vna/e5071c/import`: Serialización y transferencia bidireccional de estados de calibración.
+    - `/api/vna/e5071c/reset`: Recuperación por bus mediante comandos `*RST` y `*CLS` en caliente.
+- **Interfaz Gráfica de Calibración Avanzada (`CalibrationTool.tsx`)**:
+    - Nueva tarjeta "Agilent E5071C" con flujo interactivo en red y conexión TCP/IP configurable.
+    - Selector dinámico de puertos de calibración y flujo visual no lineal paso a paso para la medición de estándares.
+    - Soporte para restaurar calibraciones antiguas desde el servidor o subir archivos de estado locales.
+- **Interfaz de Medición Vectorial Avanzada (`MeasurementTool.tsx`)**:
+    - Panel lateral de configuración de hardware E5071C que permite ajustar el averaging, smoothing y tipo de sweep antes de capturar datos.
+    - Soporte para resoluciones de hasta 20,000 puntos por barrido de forma nativa.
+
+### Cambiado
+- **Routing del Módulo de Comunicaciones (`vna.py`)**:
+    - Integración de cargador dinámico del driver `E5071C` con fallback robusto.
+    - Modificación del método de conexión `get_vna_connection` para soportar direccionamiento IP nativo.
+    - Bypass de averaging y smoothing en `run_sweep` para permitir que el E5071C aplique sus filtros de hardware a máxima velocidad.
+- **Gestión de Sesiones de Medición (`main.py`)**:
+    - Soporte multi-arquitectura ampliado para detectar de forma automática el modelo E5071C e inicializar las subcarpetas del sistema de biblioteca asociadas.
+
+## [1.8.0] - 2026-05-25
+
+### Añadido
+- **Extractor SOTA de Parámetros Físicos dependientes de la Frecuencia**:
+    - Ajuste no lineal multivariable mediante `scipy.optimize.least_squares` con pesos de magnitud relativa en escala logarítmica.
+    - Modelado de **Efecto Pelicular (Skin Effect)** en la resistencia serie para representar pérdidas por conducción de alta frecuencia: $R_s(f) = R_{dc} + R_{skin} \cdot \sqrt{f}$.
+    - Modelado de **Dispersión Dieléctrica** (relajación Cole-Cole) en capacitores para desacoplar las pérdidas de polarización: $C_s(f) = C_0 \cdot (f/1\text{ MHz})^{-\alpha}$.
+    - Modelado de **Dispersión Magnética y Pérdidas del Núcleo** en inductores para representar el decaimiento de permeabilidad efectiva: $L_s(f) = L_0 \cdot (f/1\text{ MHz})^{-\beta}$.
+- **Filtros Estrictos de Pasividad y Fase Coherente**:
+    - Restricción estricta de parte real positiva de la impedancia ($\text{Re}(Z) > 10^{-5}\ \Omega$) para descartar de forma segura ruidos gigahertz e imperfecciones de calibración.
+    - Acotamiento estricto de fase de capacitores ($[-89.9^\circ, -5^\circ]$) e inductores ($[5^\circ, 89.9^\circ]$).
+- **Ventana de Búsqueda Pre-Resonante Dinámica**:
+    - Acotamiento automático de la ventana de búsqueda, deteniéndose en el primer cruce de fase por cero (frecuencia de autorresonancia, SRF).
+- **Documentación Técnica Científica Avanzada**:
+    - `Documentación/SOTA_Nominal_Parameter_Extraction_Report.md`: Informe completo en inglés con las derivaciones de física de materiales, topologías RLC dependientes de frecuencia y validaciones experimentales.
+    - `Documentación/Analysis_of_Measurement_Discrepancies_and_Systematic_Errors.md`: Estudio metrológico en inglés formato IEEE demostrando matemáticamente cómo las pérdidas del canal subestiman la inductancia y sobreestiman la capacitancia.
+
+### Cambiado
+- **Motor de Extracción Principal (`nominal_extraction.py`)**:
+    - Refactorización de la función `extract_nominal_value` integrando la optimización RLC SOTA de 5 parámetros.
+    - Implementación de un mecanismo de fallback robusto del 100% que vuelve de forma transparente a la mediana ponderada tradicional si la optimización diverge o arroja parámetros no físicos.
+
 ## [1.7.0] - 2026-05-22
 
 ### Añadido

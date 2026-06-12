@@ -825,11 +825,18 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
                     ) : (
                       <Badge variant="outline" className="opacity-40 border-dashed">Cutoff Freq</Badge>
                     )}
-                    {selectedItem.analysis_history?.compact_model ? (
+                    {selectedItem.analysis_history?.compact_model_shunt ? (
+                      <Badge className="bg-emerald-600 text-white hover:bg-emerald-700 cursor-help animate-in fade-in" title={`Shunt - Analizado el: ${new Date(selectedItem.analysis_history.compact_model_shunt.analyzed_at * 1000).toLocaleString()}`}>RLC Shunt ✓</Badge>
+                    ) : null}
+                    {selectedItem.analysis_history?.compact_model_vf ? (
+                      <Badge className="bg-emerald-600 text-white hover:bg-emerald-700 cursor-help animate-in fade-in" title={`VF - Analizado el: ${new Date(selectedItem.analysis_history.compact_model_vf.analyzed_at * 1000).toLocaleString()}`}>RLC VF ✓</Badge>
+                    ) : null}
+                    {selectedItem.analysis_history?.compact_model && !selectedItem.analysis_history?.compact_model_shunt && !selectedItem.analysis_history?.compact_model_vf ? (
                       <Badge className="bg-emerald-600 text-white hover:bg-emerald-700 cursor-help animate-in fade-in" title={`Analizado el: ${new Date(selectedItem.analysis_history.compact_model.analyzed_at * 1000).toLocaleString()}`}>RLC Model ✓</Badge>
-                    ) : (
+                    ) : null}
+                    {!selectedItem.analysis_history?.compact_model_shunt && !selectedItem.analysis_history?.compact_model_vf && !selectedItem.analysis_history?.compact_model ? (
                       <Badge variant="outline" className="opacity-40 border-dashed">RLC Model</Badge>
-                    )}
+                    ) : null}
                     {selectedItem.analysis_history?.quick_extract ? (
                       <Badge className="bg-emerald-600 text-white hover:bg-emerald-700 cursor-help animate-in fade-in" title={`Analizado el: ${new Date(selectedItem.analysis_history.quick_extract.analyzed_at * 1000).toLocaleString()}`}>Quick Extract ✓</Badge>
                     ) : (

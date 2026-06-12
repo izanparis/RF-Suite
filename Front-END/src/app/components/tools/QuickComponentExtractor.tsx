@@ -166,15 +166,36 @@ export function QuickComponentExtractor() {
     }
   };
 
-  const chartData = useMemo(() => result ? result.freq_hz.map((f: number, i: number) => {
-    const selected = Boolean(result.selected_mask?.[i]);
-    return {
-      freqMHz: Number((f / 1e6).toFixed(6)),
-      magZ: result.mag_z[i],
-      selectedMagZ: selected ? result.mag_z[i] : null,
-      slope: result.slope[i]
-    };
-  }) : [], [result]);
+  const chartData = useMemo(() => {
+    if (!result) return [];
+    
+    const dataPoints = result.freq_hz.map((f: number, i: number) => {
+      const selected = Boolean(result.selected_mask?.[i]);
+      return {
+        freqMHz: Number((f / 1e6).toFixed(6)),
+        freqHz: f,
+        magZ: result.mag_z[i],
+        selectedMagZ: selected ? result.mag_z[i] : null,
+        slope: result.slope[i]
+      };
+    });
+    
+    // Zoom filter: only include points up to the self-resonance frequency (SRF)
+    if (result.srf_hz) {
+      return dataPoints.filter(dp => dp.freqHz <= result.srf_hz);
+    }
+    
+    // Fallback: zoom to the end of the selected nominal window
+    if (result.selected_mask) {
+      const lastSelectedIdx = result.selected_mask.lastIndexOf(true);
+      if (lastSelectedIdx !== -1) {
+        const limitFreq = result.freq_hz[lastSelectedIdx];
+        return dataPoints.filter(dp => dp.freqHz <= limitFreq);
+      }
+    }
+    
+    return dataPoints;
+  }, [result]);
 
   const quality = qualityCopy(result?.quality);
   const QualityIcon = quality.icon;
