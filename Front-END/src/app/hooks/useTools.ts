@@ -9,7 +9,15 @@ import {
   Zap,
   Ruler,
   Library,
-  FileSearch
+  FileSearch,
+  Layers,
+  ListChecks,
+  CircleDot,
+  FolderOpen,
+  FileText,
+  Radio,
+  BarChart2,
+  Cpu,
 } from 'lucide-react';
 import { useLanguage } from '../lib/i18n';
 
@@ -91,6 +99,54 @@ export function useTools() {
       name: 'Datasheets',
       description: 'Busca hojas de datos y fíjalas a componentes medidos.',
       icon: FileSearch,
+    },
+    {
+      id: 'deembed',
+      name: 'De-embedding Open-Short',
+      description: 'Elimina parásitos del fixture (OPEN/SHORT) y genera el .s2p limpio del DUT.',
+      icon: Layers,
+    },
+    {
+      id: 'batch',
+      name: 'Procesamiento en Lote',
+      description: 'Extrae valores nominales o modelos compactos de múltiples medidas a la vez.',
+      icon: ListChecks,
+    },
+    {
+      id: 'smith',
+      name: 'Carta de Smith',
+      description: 'Visualización interactiva multi-traza con cursor, zoom y exportación PNG.',
+      icon: CircleDot,
+    },
+    {
+      id: 'project',
+      name: 'Gestor de Proyectos',
+      description: 'Empaqueta medidas, modelos e informes en un archivo .rfproject portátil.',
+      icon: FolderOpen,
+    },
+    {
+      id: 'report',
+      name: 'Informes PDF',
+      description: 'Genera informes IEEE profesionales con gráficas, tablas y métricas automáticas.',
+      icon: FileText,
+    },
+    {
+      id: 'tdr',
+      name: 'TDR — Dominio Temporal',
+      description: 'Detecta discontinuidades de impedancia en líneas y cables por IFFT de S11.',
+      icon: Radio,
+    },
+    {
+      id: 'comparison',
+      name: 'Comparación de Prototipos',
+      description: 'Superpone y analiza estadísticamente múltiples medidas S-parameter.',
+      icon: BarChart2,
+    },
+    {
+      id: 'sequencer',
+      name: 'Secuenciador de Pruebas',
+      description: 'Automatiza flujos de medida RF con recetas de pasos configurables.',
+      icon: Cpu,
     },
   ], [t]);
 

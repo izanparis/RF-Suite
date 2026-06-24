@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';
+﻿import React, { useState, useRef } from 'react';
+import { toast } from 'sonner';
 import { ToolShell } from '../ToolShell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card';
 import { Label } from '../ui/label';
@@ -18,7 +19,7 @@ export function CorrectionTool() {
 
   const handleCorrect = async () => {
     if (!rawFile || !calFile) {
-      alert("Por favor selecciona ambos archivos: Medición RAW y Calibración JSON");
+      toast.info("Por favor selecciona ambos archivos: Medición RAW y Calibración JSON");
       return;
     }
 
@@ -63,7 +64,7 @@ export function CorrectionTool() {
 
   const downloadTouchstone = () => {
     if (!result?.touchstone_content) {
-        alert("No hay contenido Touchstone para descargar.");
+        toast.info("No hay contenido Touchstone para descargar.");
         return;
     }
     try {
@@ -85,7 +86,7 @@ export function CorrectionTool() {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     } catch (e) {
-        alert("Error al generar la descarga local.");
+        toast.error("Error al exportar: " + e);
     }
   };
 
@@ -229,3 +230,5 @@ export function CorrectionTool() {
     </ToolShell>
   );
 }
+
+

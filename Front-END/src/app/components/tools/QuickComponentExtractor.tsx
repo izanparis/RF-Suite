@@ -6,10 +6,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Badge } from '../ui/badge';
 import { cn } from '../ui/utils';
 import { Upload, FileCheck, Zap, Activity, Info, Target, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
-  Legend, ResponsiveContainer 
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  Legend, ResponsiveContainer
 } from 'recharts';
+import { toast } from 'sonner';
+import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 
 type ExtractionQuality = 'good' | 'fair' | 'poor' | 'bad';
 
@@ -110,7 +112,7 @@ export function QuickComponentExtractor() {
   const handleAction = async (id: string) => {
     if (id === 'extract') {
       if (!file && !selectedMeasName) {
-        alert("Por favor, selecciona un archivo Touchstone o una medición de la biblioteca.");
+        toast.info("Por favor, selecciona un archivo Touchstone o una medición de la biblioteca.");
         return;
       }
       setLoading(true);
@@ -159,7 +161,7 @@ export function QuickComponentExtractor() {
         }
       } catch (error) {
         console.error(error);
-        alert('Error: ' + error);
+        toast.error('Error: ' + error);
       } finally {
         setLoading(false);
       }
@@ -351,11 +353,34 @@ export function QuickComponentExtractor() {
                   
                   <div className="grid grid-cols-2 gap-4">
                     <div className="p-3 bg-background rounded-lg border border-border">
-                      <p className="text-[10px] uppercase font-bold text-muted-foreground mb-1 text-zinc-900">SRF</p>
+                      <p className="text-[10px] uppercase font-bold text-muted-foreground mb-1 text-zinc-900">
+                        <TooltipProvider>
+                          <UITooltip>
+                            <TooltipTrigger asChild>
+                              <span className="cursor-help border-b border-dashed border-muted-foreground/50">SRF</span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-xs">
+                              Self-Resonant Frequency — frecuencia a la que la reactancia del componente es cero.
+                            </TooltipContent>
+                          </UITooltip>
+                        </TooltipProvider>
+                      </p>
                       <p className="text-xl font-mono font-bold text-zinc-900">{formatFreq(result.srf_hz ?? 0)}</p>
                     </div>
                     <div className="p-3 bg-background rounded-lg border border-border">
-                      <p className="text-[10px] uppercase font-bold text-muted-foreground mb-1 text-zinc-900">ESR @ SRF</p>
+                      <p className="text-[10px] uppercase font-bold text-muted-foreground mb-1 text-zinc-900">
+                        <TooltipProvider>
+                          <UITooltip>
+                            <TooltipTrigger asChild>
+                              <span className="cursor-help border-b border-dashed border-muted-foreground/50">ESR</span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-xs">
+                              Equivalent Series Resistance — resistencia parásita serie en la resonancia.
+                            </TooltipContent>
+                          </UITooltip>
+                        </TooltipProvider>
+                        {' '}@ SRF
+                      </p>
                       <p className="text-xl font-mono font-bold text-zinc-900">{typeof result.esr === 'number' ? result.esr.toFixed(3) : 'N/A'} Ω</p>
                     </div>
                   </div>

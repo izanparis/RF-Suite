@@ -5,19 +5,23 @@ import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { 
-  Library, 
-  RefreshCw, 
-  Activity, 
-  Download, 
-  ChevronLeft, 
-  ChevronRight, 
-  FileText, 
-  CircuitBoard, 
+import { toast } from 'sonner';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
+import {
+  Library,
+  RefreshCw,
+  Activity,
+  Download,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  FileText,
+  CircuitBoard,
   FileUp,
   X,
   CheckCircle2,
-  Maximize2
+  Maximize2,
+  Loader2,
 } from 'lucide-react';
 import { useLanguage } from '../../lib/i18n';
 import {
@@ -43,8 +47,21 @@ export function CompactModelTool() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Extraction options
-  const [method, setMethod] = useState("shunt"); // 'shunt' or 'vf'
+  const [method, setMethod] = useState("physical"); // 'physical' or 'vf'
+  const [componentType, setComponentType] = useState("capacitor"); // 'capacitor' or 'inductor'
+  const [topology, setTopology] = useState("shunt"); // 'shunt', 'series', 'oneport'
   const [modelName, setModelName] = useState("");
+
+  // Auto-set default topology when component type changes
+  const handleComponentTypeChange = (val: string) => {
+    setComponentType(val);
+    if (val === "inductor") setTopology("series");
+    else setTopology("shunt");
+  };
+
+  // EDA export
+  const [showEdaMenu, setShowEdaMenu] = useState(false);
+  const [edaLoading, setEdaLoading] = useState(false);
 
   // Plot state
   const [activePlotIdx, setActivePlotIdx] = useState(0);
@@ -68,7 +85,7 @@ export function CompactModelTool() {
   const handleAction = async (id: string) => {
     if (id === 'extract') {
       if (!selectedMeas && !customFile) {
-        alert(t('cm.alert.no_data'));
+        toast.info(t('cm.alert.no_data'));
         return;
       }
 
@@ -86,8 +103,10 @@ export function CompactModelTool() {
         }
         
         formData.append('method', method);
+        formData.append('component_type', componentType);
+        formData.append('topology', topology);
         formData.append('custom_name', modelName);
-        formData.append('z0', "50.0"); 
+        formData.append('z0', "50.0");
 
         const response = await fetch('http://localhost:8080/api/compact-models/extract', {
           method: 'POST',
@@ -111,11 +130,12 @@ export function CompactModelTool() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               measurement_relative_path: relativePath,
-              tool_name: method === 'vf' ? 'compact_model_vf' : 'compact_model_shunt',
+              tool_name: method === 'vf' ? 'compact_model_vf' : `compact_model_${componentType}`,
               results: {
                 summary: {
                   method: data.summary.method || method,
                   c_eff: data.summary.c_eff,
+                  l_eff: data.summary.l_eff,
                   nrms: data.summary.nrms
                 },
                 spice_netlist: data.spice_netlist,
@@ -126,7 +146,7 @@ export function CompactModelTool() {
         }
       } catch (error) {
         console.error(error);
-        alert('Error: ' + (error instanceof Error ? error.message : String(error)));
+        toast.error('Error: ' + (error instanceof Error ? error.message : String(error)));
       } finally {
         setLoading(false);
       }
@@ -143,6 +163,36 @@ export function CompactModelTool() {
       link.download = downloadName;
       link.click();
       URL.revokeObjectURL(url);
+    }
+  };
+
+  const handleEdaExport = async (format: string) => {
+    if (!result?.spice_netlist) return;
+    setShowEdaMenu(false);
+    setEdaLoading(true);
+    try {
+      const res = await fetch('http://localhost:8080/api/eda/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          format,
+          spice_netlist: result.spice_netlist,
+          name: modelName || 'RF_MODEL',
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail);
+      const data = await res.json();
+      const blob = new Blob([data.content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = data.filename || `model.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      toast.error('Error EDA export: ' + e.message);
+    } finally {
+      setEdaLoading(false);
     }
   };
 
@@ -222,7 +272,7 @@ export function CompactModelTool() {
                         type="file" 
                         ref={fileInputRef} 
                         onChange={handleFileChange} 
-                        accept=".s2p" 
+                        accept=".s1p,.s2p"
                         className="hidden" 
                       />
                     </div>
@@ -257,13 +307,40 @@ export function CompactModelTool() {
             <CardContent className="space-y-6 flex-1">
               <div className="space-y-4">
                 <div className="space-y-2">
+                  <Label className="text-xs font-bold uppercase text-muted-foreground">Tipo de Componente</Label>
+                  <Select value={componentType} onValueChange={handleComponentTypeChange}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="capacitor">Condensador</SelectItem>
+                      <SelectItem value="inductor">Bobina (Inductor)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold uppercase text-muted-foreground">Topología de Medida</Label>
+                  <Select value={topology} onValueChange={setTopology}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="shunt">Shunt-Through (2 puertos, DUT a masa)</SelectItem>
+                      <SelectItem value="series">Series-Through (2 puertos, DUT en serie)</SelectItem>
+                      <SelectItem value="oneport">Un Puerto — S11</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
                   <Label className="text-xs font-bold uppercase text-muted-foreground">Método de Extracción</Label>
                   <Select value={method} onValueChange={setMethod}>
                     <SelectTrigger className="h-10">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="shunt">Ajuste Físico (Shunt-Through)</SelectItem>
+                      <SelectItem value="physical">Modelo Físico (Foster RLC)</SelectItem>
                       <SelectItem value="vf">Vector Fitting (Modelo Racional)</SelectItem>
                     </SelectContent>
                   </Select>
@@ -312,13 +389,42 @@ export function CompactModelTool() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="text-center md:text-right">
-                      <p className="text-[10px] text-muted-foreground uppercase font-bold">Error (NRMS)</p>
+                      <p className="text-[10px] text-muted-foreground uppercase font-bold">
+                        Error (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="cursor-help border-b border-dashed border-muted-foreground/50">NRMS</span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-xs">
+                              Error cuadrático medio normalizado. &lt;5% excelente, &lt;15% bueno.
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        )
+                      </p>
                       <p className="text-sm font-mono font-bold text-primary">{result.summary.nrms.toExponential(3)}</p>
                     </div>
-                    {result.summary.c_eff && (
+                    {result.summary.c_eff != null && (
                       <div className="text-center md:text-right border-l border-border pl-4">
                         <p className="text-[10px] text-muted-foreground uppercase font-bold">Capacidad</p>
-                        <p className="text-sm font-mono font-bold">{(result.summary.c_eff * 1e12).toFixed(2)} pF</p>
+                        <p className="text-sm font-mono font-bold">
+                          {result.summary.c_eff >= 1e-9
+                            ? `${(result.summary.c_eff * 1e9).toFixed(3)} nF`
+                            : `${(result.summary.c_eff * 1e12).toFixed(2)} pF`}
+                        </p>
+                      </div>
+                    )}
+                    {result.summary.l_eff != null && (
+                      <div className="text-center md:text-right border-l border-border pl-4">
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold">Inductancia</p>
+                        <p className="text-sm font-mono font-bold">
+                          {result.summary.l_eff >= 1e-3
+                            ? `${(result.summary.l_eff * 1e3).toFixed(3)} mH`
+                            : result.summary.l_eff >= 1e-6
+                            ? `${(result.summary.l_eff * 1e6).toFixed(3)} µH`
+                            : `${(result.summary.l_eff * 1e9).toFixed(2)} nH`}
+                        </p>
                       </div>
                     )}
                   </div>
@@ -352,10 +458,40 @@ export function CompactModelTool() {
                       <FileText className="w-4 h-4" />
                       Netlist (.cir)
                     </CardTitle>
-                    <div className="flex gap-2">
-                       <Button variant="outline" size="sm" className="h-7 text-[10px] uppercase font-bold" onClick={() => handleAction('save')}>
-                        <Download className="w-3 h-3 mr-1" /> PC
+                    <div className="flex gap-2 items-center">
+                      <Button variant="outline" size="sm" className="h-7 text-[10px] uppercase font-bold" onClick={() => handleAction('save')}>
+                        <Download className="w-3 h-3 mr-1" /> SPICE
                       </Button>
+                      <div className="relative">
+                        <Button
+                          variant="outline" size="sm"
+                          className="h-7 text-[10px] uppercase font-bold"
+                          onClick={() => setShowEdaMenu(v => !v)}
+                          disabled={edaLoading}
+                        >
+                          {edaLoading
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : <>EDA <ChevronDown className="w-3 h-3 ml-1" /></>}
+                        </Button>
+                        {showEdaMenu && (
+                          <div className="absolute right-0 top-8 z-50 bg-popover border border-border rounded-md shadow-lg min-w-[180px] py-1">
+                            {[
+                              { format: 'kicad', label: 'KiCad Symbol',    ext: '.kicad_sym' },
+                              { format: 'qucs',  label: 'Qucs-S Schematic', ext: '.sch' },
+                              { format: 'ads',   label: 'ADS MDL Snippet', ext: '.mdl' },
+                            ].map(opt => (
+                              <button
+                                key={opt.format}
+                                className="w-full text-left px-4 py-1.5 text-xs hover:bg-muted transition-colors flex justify-between"
+                                onClick={() => handleEdaExport(opt.format)}
+                              >
+                                <span>{opt.label}</span>
+                                <span className="text-muted-foreground font-mono">{opt.ext}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </CardHeader>

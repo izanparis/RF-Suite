@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+﻿import React, { useState, useRef, useEffect } from 'react';
+import { toast } from 'sonner';
 import { ToolShell } from '../ToolShell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card';
 import { Label } from '../ui/label';
@@ -73,7 +74,7 @@ export function CutoffFreqTool() {
 
   const handleCalculate = async () => {
     if (!file && !selectedMeasName) {
-      alert("Por favor, selecciona un archivo o una medición de la biblioteca.");
+      toast.info("Por favor, selecciona un archivo o una medición de la biblioteca.");
       return;
     }
 
@@ -123,7 +124,7 @@ export function CutoffFreqTool() {
       }
     } catch (error) {
       console.error(error);
-      alert("Error: " + (error instanceof Error ? error.message : "Error al calcular la frecuencia de corte."));
+      toast.error("Error: " + (error instanceof Error ? error.message : "Error al calcular la frecuencia de corte."));
     } finally {
       setLoading(false);
     }
@@ -361,3 +362,5 @@ export function CutoffFreqTool() {
     </ToolShell>
   );
 }
+
+

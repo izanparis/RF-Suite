@@ -11,3 +11,4 @@ pyserial
 pyvisa
 pyvisa-py
 pypdf
+sqlalchemy

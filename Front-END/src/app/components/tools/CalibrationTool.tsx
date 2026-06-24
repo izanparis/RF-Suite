@@ -1,4 +1,5 @@
-import React, { useMemo, useState, useEffect } from 'react';
+﻿import React, { useMemo, useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { ToolShell } from '../ToolShell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card';
 import { UnitInput } from '../UnitInput';
@@ -233,9 +234,9 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
         }));
       }
       
-      alert(`Estándar ${stepKey.toUpperCase()} medido con éxito.`);
+      toast.success(`Estándar ${stepKey.toUpperCase()} medido con éxito.`);
     } catch (e) {
-      alert('Error: ' + (e instanceof Error ? e.message : String(e)));
+      toast.error('Error: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setLoading(false);
     }
@@ -254,12 +255,12 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
         if (outDir) {
           await saveBase64File(outDir, filename, data.file_content);
         }
-        alert(saveToServer ? t('cal.alert.finish_success') + " (Guardada en servidor)" : t('cal.alert.finish_success'));
+        toast.success(saveToServer ? t('cal.alert.finish_success') + " (Guardada en servidor)" : t('cal.alert.finish_success'));
       } else {
-        alert(t('cal.alert.finish_error') + (data.message || 'Error de finalización.'));
+        toast.error(t('cal.alert.finish_error') + (data.message || 'Error de finalización.'));
       }
     } catch (e) {
-      alert('Error: ' + (e instanceof Error ? e.message : String(e)));
+      toast.error('Error: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setLoading(false);
     }
@@ -323,9 +324,9 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
         ...prev,
         [stepKey]: true
       }));
-      alert(`Estándar ${standard.toUpperCase()} medido en puerto ${port} con éxito.`);
+      toast.success(`Estándar ${standard.toUpperCase()} medido en puerto ${port} con éxito.`);
     } catch (e) {
-      alert('Error: ' + (e instanceof Error ? e.message : String(e)));
+      toast.error('Error: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setLoading(false);
     }
@@ -346,10 +347,10 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
           await saveBase64File(outDir, filename, data.file_content);
         }
       }
-      alert(saveToServer ? 'Calibración E5071C completada y guardada en servidor y carpeta local.' : 'Calibración E5071C completada.');
+      toast.success(saveToServer ? 'Calibración E5071C completada y guardada en servidor y carpeta local.' : 'Calibración E5071C completada.');
       setStatus('idle');
     } catch (e) {
-      alert('Error: ' + (e instanceof Error ? e.message : String(e)));
+      toast.error('Error: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setLoading(false);
     }
@@ -415,7 +416,7 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
       
       setHpStandardsDone(prev => ({ ...prev, [std]: true }));
     } catch (e) {
-      alert("Error: " + e);
+      toast.error("Error: " + e);
     } finally {
       setLoading(false);
     }
@@ -424,7 +425,7 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
   const handleAction = async (id: string) => {
     if (id === 'abort') {
       setStatus('idle');
-      alert("Calibración abortada. Se ha vuelto al modo de configuración.");
+      toast.info("Calibración abortada. Se ha vuelto al modo de configuración.");
       return;
     }
 
@@ -434,12 +435,12 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
         const res = await fetch(`http://localhost:8080/api/vna/connect?device=${device}`);
         const data = await res.json();
         if (data.connected) {
-          alert(t('cal.alert.connect_success'));
+          toast.success(t('cal.alert.connect_success'));
         } else {
-          alert(t('cal.alert.connect_error') + data.error + '\n\n' + t('cal.alert.connect_help'));
+          toast.error(t('cal.alert.connect_error') + data.error + '\n\n' + t('cal.alert.connect_help'));
         }
       } catch (e) {
-        alert(t('cal.alert.backend_error'));
+        toast.error(t('cal.alert.backend_error'));
       } finally {
         setLoading(false);
       }
@@ -473,9 +474,9 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
         }
         setStatus('idle');
         setHpStandardsDone({ open: false, short: false, load: false, thru: false });
-        alert("VNA Reiniciado (Preset enviado).");
+        toast.success("VNA Reiniciado (Preset enviado).");
       } catch (e) {
-        alert("Error al reiniciar VNA");
+        toast.error("Error al resetear: " + e);
       } finally {
         setLoading(false);
       }
@@ -483,7 +484,7 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
 
     if (id === 'start') {
       if (startHz === null || stopHz === null) {
-        alert(t('alert.freq_error'));
+        toast.error(t('alert.freq_error'));
         return;
       }
       
@@ -498,7 +499,7 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
       };
       let pts = parsePointsValue(points);
       if (architecture === 'NanoVNA' && pts > 1024) {
-        alert("El dispositivo tiene un límite de hardware de 1024 puntos. Se ajustará el valor automáticamente.");
+        toast.error("El dispositivo tiene un límite de hardware de 1024 puntos. Se ajustará el valor automáticamente.");
         setPoints('1024');
         pts = 1024;
       }
@@ -570,7 +571,7 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
           }
           setStatus('calibrating');
           setCurrentStepIdx(0);
-          alert('Calibración E5071C iniciada. Usa los bloques para medir en cualquier orden.');
+          toast.info('Calibración E5071C iniciada. Usa los bloques para medir en cualquier orden.');
         } else {
           const res = await fetch(`http://localhost:8080/api/vna/calibrate/start?device=${device}`, {
             method: 'POST',
@@ -612,10 +613,10 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
 
           setStatus('calibrating');
           setCurrentStepIdx(0);
-          alert(t('cal.alert.start_success'));
+          toast.success(t('cal.alert.start_success'));
         }
       } catch (e) {
-        alert('Error: ' + (e instanceof Error ? e.message : String(e)));
+        toast.error('Error: ' + (e instanceof Error ? e.message : String(e)));
       } finally {
         setLoading(false);
       }
@@ -641,7 +642,7 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
               await saveBase64File(outDir, filename, data.file_content);
             }
           }
-          alert(saveToServer ? 'Calibración E5071C completada y guardada.' : 'Calibración E5071C completada.');
+          toast.success(saveToServer ? 'Calibración E5071C completada y guardada.' : 'Calibración E5071C completada.');
           setStatus('idle');
           return;
         } else {
@@ -739,7 +740,7 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
                 if (outDir) {
                    await saveBase64File(outDir, filename, data.file_content);
                 }
-                alert(saveToServer ? t('cal.alert.finish_success') + " (Guardada en servidor y VNA)" : t('cal.alert.finish_success'));
+                toast.success(saveToServer ? t('cal.alert.finish_success') + " (Guardada en servidor y VNA)" : t('cal.alert.finish_success'));
              }
              
              setStatus('idle');
@@ -754,18 +755,18 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
               if (outDir) {
                 await saveBase64File(outDir, filename, data.file_content);
               }
-              alert(saveToServer ? t('cal.alert.finish_success') + " (Guardada en servidor)" : t('cal.alert.finish_success'));
+              toast.success(saveToServer ? t('cal.alert.finish_success') + " (Guardada en servidor)" : t('cal.alert.finish_success'));
             } else {
-              alert(t('cal.alert.finish_error') + (data.message || 'Error desconocido del servidor.'));
+              toast.error(t('cal.alert.finish_error') + (data.message || 'Error desconocido del servidor.'));
             }
           }
         } catch (e) {
           console.error(e);
-          alert(t('cal.alert.finish_error') + (e instanceof Error ? e.message : String(e)));
+          toast.error(t('cal.alert.finish_error') + (e instanceof Error ? e.message : String(e)));
         }
       }
     } catch (e) {
-      alert('Error: ' + e);
+      toast.error('Error: ' + e);
     } finally {
       setLoading(false);
     }
@@ -781,10 +782,10 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
         : `http://localhost:8080/api/vna/hp/export?filename=${encodeURIComponent(name)}&device=${device}`;
       const res = await fetch(url);
       const data = await res.json();
-      if (data.status === 'success') alert(data.message);
+      if (data.status === 'success') toast.success(data.message);
       else throw new Error(data.detail || data.message);
     } catch (e) {
-      alert("Error al exportar: " + e);
+      toast.error("Error al exportar: " + e);
     } finally {
       setLoading(false);
     }
@@ -807,7 +808,7 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
         });
         const data = await res.json();
         if (data.status === 'success') {
-          alert(data.message);
+          toast.success(data.message);
           setHpImportFile(null);
         } else throw new Error(data.detail || data.message);
       } else if (importFilename) {
@@ -821,13 +822,13 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
           body: JSON.stringify({ filename: importFilename, device })
         });
         const data = await res.json();
-        if (data.status === 'success') alert(data.message);
+        if (data.status === 'success') toast.success(data.message);
         else throw new Error(data.detail || data.message);
       } else {
-        alert("Selecciona un archivo local o introduce el nombre de uno en la biblioteca.");
+        toast.info("Selecciona un archivo local o introduce el nombre de uno en la biblioteca.");
       }
     } catch (e) {
-      alert("Error al importar: " + e);
+      toast.error("Error al importar: " + e);
     } finally {
       setLoading(false);
     }
@@ -1727,3 +1728,5 @@ export function CalibrationTool({ onBackToDashboard }: CalibrationToolProps) {
     </ToolShell>
   );
 }
+
+

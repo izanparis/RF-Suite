@@ -10,14 +10,17 @@ import { cn } from '../ui/utils';
 import { Upload, FileText, RefreshCw, Zap, Activity, Check, ArrowRight, Download, Wifi } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { useLanguage } from '../../lib/i18n';
+import { toast } from 'sonner';
+import { ConfirmDialog } from '../ConfirmDialog';
 
 import { Checkbox } from '../ui/checkbox';
 
 interface MeasurementToolProps {
   onBackToDashboard?: () => void;
+  onVnaChange?: (device: string) => void;
 }
 
-export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
+export function MeasurementTool({ onBackToDashboard, onVnaChange }: MeasurementToolProps) {
   const { t } = useLanguage();
   const [calFile, setCalFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -115,24 +118,27 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [flashFields, setFlashFields] = useState(false);
 
-  const handleReset = async () => {
-    if (!window.confirm("¿Seguro que quieres reiniciar el VNA? Se perderá la configuración actual.")) return;
+  const doReset = async () => {
     setLoading(true);
     try {
       const endpoint = architecture === 'E5071C'
         ? `http://localhost:8080/api/vna/e5071c/reset?device=${encodeURIComponent(device)}`
         : `http://localhost:8080/api/vna/hp/reset?device=${encodeURIComponent(device)}`;
-      const res = await fetch(endpoint, {
-        method: 'POST'
-      });
-      if (res.ok) alert("VNA Reiniciado correctamente");
-      else alert("Error al reiniciar VNA");
+      const res = await fetch(endpoint, { method: 'POST' });
+      if (res.ok) toast.success("VNA Reiniciado correctamente");
+      else toast.error("Error al reiniciar VNA");
     } catch (e) {
-      alert("Error de conexión");
+      toast.error("Error de conexión");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleReset = () => {
+    setConfirmReset(true);
   };
 
   // Calibraciones del servidor
@@ -169,6 +175,8 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
       setStopU('MHz');
       setPoints(cal.points.toString());
       setCalFile(null);
+      setFlashFields(true);
+      setTimeout(() => setFlashFields(false), 600);
     }
   };
 
@@ -194,7 +202,7 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
             body: JSON.stringify({ filename: selectedCalName, device })
           });
         } else {
-          alert("Selecciona una calibración primero.");
+          toast.info("Selecciona una calibración primero.");
           return;
         }
       } else {
@@ -214,13 +222,13 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
             body: JSON.stringify({ filename: selectedCalName, device })
           });
         } else {
-          alert("Selecciona una calibración primero.");
+          toast.info("Selecciona una calibración primero.");
           return;
         }
       }
 
       if (res.ok) {
-        alert(t('measure.alert.import_success'));
+        toast.success(t('measure.alert.import_success'));
       } else {
         let errorMsg = "Error desconocido";
         try {
@@ -234,7 +242,7 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
         throw new Error(errorMsg);
       }
     } catch (e: any) {
-      alert(t('measure.alert.import_error') + e.message);
+      toast.error(t('measure.alert.import_error') + e.message);
     } finally {
       setLoading(false);
     }
@@ -263,6 +271,8 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
             setStopV((data.stop_hz / 1e6).toString());
             setStopU('MHz');
             setPoints(data.points.toString());
+            setFlashFields(true);
+            setTimeout(() => setFlashFields(false), 600);
           }
         } catch (err) {
           console.error("Invalid JSON cal file");
@@ -295,6 +305,8 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
           setStopV((currentBlock[currentBlock.length - 1] / 1e6).toString());
           setStopU('MHz');
           setPoints(currentBlock.length.toString());
+          setFlashFields(true);
+          setTimeout(() => setFlashFields(false), 600);
         }
       }
     };
@@ -313,7 +325,7 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
       setSelectedCalName("");
       parseCalFile(file); // Extraer parámetros
     } else {
-      alert(`Tipo de archivo inválido. Se espera ${validExt}`);
+      toast.error(`Tipo de archivo inválido. Se espera ${validExt}`);
     }
   };
 
@@ -324,7 +336,7 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
     }
 
     if (id === 'reset_vna') {
-      await handleReset();
+      handleReset();
       return;
     }
 
@@ -336,12 +348,12 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
         const res = await fetch(`http://localhost:8080/api/vna/connect?${queryParams}`);
         const data = await res.json();
         if (data.connected) {
-          alert(t('alert.connect_success'));
+          toast.success(t('alert.connect_success'));
         } else {
-          alert(t('alert.connect_fail') + (data.error || ""));
+          toast.error(t('alert.connect_fail') + (data.error || ""));
         }
       } catch (e) {
-        alert(t('alert.connect_error') + e);
+        toast.error(t('alert.connect_error') + e);
       }
       return;
     }
@@ -364,17 +376,17 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
       const maxPts = architecture === 'E5071C' ? 20001 : architecture === 'HP8752A' ? 1601 : 1024;
 
       if (pts > maxPts) {
-        alert(`Límite de hardware excedido (máx ${maxPts} puntos). Ajustando...`);
+        toast.info(`Límite de hardware excedido (máx ${maxPts} puntos). Ajustando...`);
         setPoints(maxPts.toString());
         pts = maxPts;
       }
 
       if (start_hz >= stop_hz) {
-        alert(t('alert.freq_error'));
+        toast.error(t('alert.freq_error'));
         return;
       }
       if (pts <= 0) {
-        alert(t('alert.points_error'));
+        toast.error(t('alert.points_error'));
         return;
       }
 
@@ -439,11 +451,11 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
         const data = await response.json();
         setResult(data);
         if (saveToLibrary) {
-          alert(`Medición completada y guardada en la biblioteca${data.saved_filename ? `: ${data.saved_filename}` : "."}`);
+          toast.success(`Medición completada y guardada en la biblioteca${data.saved_filename ? `: ${data.saved_filename}` : "."}`);
         }
       } catch (error) {
         console.error(error);
-        alert(t('alert.measure_error') + (error instanceof Error ? error.message : String(error)));
+        toast.error(t('alert.measure_error') + (error instanceof Error ? error.message : String(error)));
       } finally {
         setLoading(false);
       }
@@ -451,7 +463,7 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
 
     if (id === 'save') {
       if (!result || !result.touchstone_content) {
-        alert(t('alert.no_measure'));
+        toast.info(t('alert.no_measure'));
         return;
       }
 
@@ -471,13 +483,13 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
           })
         });
         if (res.ok) {
-          alert(`Medición guardada en el servidor (${device}): ${filename}`);
+          toast.success(`Medición guardada en el servidor (${device}): ${filename}`);
         } else {
           const err = await res.json();
-          alert("Error al guardar: " + err.detail);
+          toast.error("Error al guardar: " + err.detail);
         }
       } catch (e) {
-        alert("Error de conexión al guardar.");
+        toast.error("Error de conexión al guardar.");
       }
     }
   };
@@ -545,6 +557,7 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
               onClick={() => {
                 setDevice('NanoVNA-Izan');
                 setSelectionMade(true);
+                onVnaChange?.('NanoVNA-Izan');
               }}
             >
               <div className="absolute right-0 top-0 p-4 opacity-10 transition-opacity group-hover:opacity-20">
@@ -578,6 +591,7 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
               onClick={() => {
                 setDevice('VNA-E5071C');
                 setSelectionMade(true);
+                onVnaChange?.('VNA-E5071C');
               }}
             >
               <div className="absolute right-0 top-0 p-4 opacity-10 transition-opacity group-hover:opacity-20">
@@ -611,6 +625,7 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
               onClick={() => {
                 setDevice('VNA-HP-8752A');
                 setSelectionMade(true);
+                onVnaChange?.('VNA-HP-8752A');
               }}
             >
               <div className="absolute right-0 top-0 p-4 opacity-10 transition-opacity group-hover:opacity-20">
@@ -1049,7 +1064,7 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
                 </Select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className={cn('grid grid-cols-2 gap-4', flashFields && 'animate-pulse [&_input]:ring-2 [&_input]:ring-primary/50')}>
                 <UnitInput
                   label="Inicio"
                   value={startV}
@@ -1073,7 +1088,7 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
               <div className="space-y-2">
                 <Label className="text-xs">Puntos</Label>
                 <Input
-                  className="bg-input-background h-8 text-sm"
+                  className={cn('bg-input-background h-8 text-sm', flashFields && 'ring-2 ring-primary/50 transition-all')}
                   value={points}
                   onChange={(e) => setPoints(e.target.value)}
                   disabled={!!selectedCalName || !!calFile}
@@ -1112,6 +1127,14 @@ export function MeasurementTool({ onBackToDashboard }: MeasurementToolProps) {
           </Card>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmReset}
+        title="Reiniciar VNA"
+        description="¿Seguro que quieres reiniciar el VNA? Se perderá la configuración actual."
+        onConfirm={() => { setConfirmReset(false); doReset(); }}
+        onCancel={() => setConfirmReset(false)}
+        destructive
+      />
     </ToolShell>
   );
 }

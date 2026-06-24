@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, CircuitBoard, FileSearch, FlaskConical, Ruler, Zap } from 'lucide-react';
+import { ArrowRight, CircuitBoard, FileSearch, FlaskConical, Layers, ListChecks, Ruler, Zap, CircleDot, FolderOpen, FileText, Radio, BarChart2, Cpu } from 'lucide-react';
 import { ToolShell } from './ToolShell';
 import { Card, CardContent } from './ui/card';
 
@@ -49,6 +49,62 @@ const rfTools = [
     description: 'Busca hojas de datos por referencia y fijalas a componentes medidos.',
     icon: FileSearch,
     badge: 'Biblioteca',
+  },
+  {
+    id: 'deembed',
+    title: 'De-embedding Open-Short',
+    description: 'Elimina parásitos del fixture midiendo OPEN y SHORT. Genera el .s2p limpio del DUT intrínseco.',
+    icon: Layers,
+    badge: 'Post-proceso',
+  },
+  {
+    id: 'batch',
+    title: 'Procesamiento en Lote',
+    description: 'Extrae valores nominales o modelos compactos de múltiples medidas de la biblioteca con un solo clic.',
+    icon: ListChecks,
+    badge: 'Automatización',
+  },
+  {
+    id: 'smith',
+    title: 'Carta de Smith',
+    description: 'Visualización interactiva multi-traza con cursor, VSWR, RL y exportación PNG.',
+    icon: CircleDot,
+    badge: 'Visualización',
+  },
+  {
+    id: 'project',
+    title: 'Gestor de Proyectos',
+    description: 'Empaqueta medidas, modelos e informes en un archivo .rfproject portátil.',
+    icon: FolderOpen,
+    badge: 'Proyectos',
+  },
+  {
+    id: 'report',
+    title: 'Informes IEEE',
+    description: 'Genera un informe profesional con gráficas, métricas, modelos y datasheets para cualquier medida de la biblioteca.',
+    icon: FileText,
+    badge: 'Documentación',
+  },
+  {
+    id: 'tdr',
+    title: 'TDR Dominio Temporal',
+    description: 'Convierte S11(f) al dominio temporal mediante IFFT con ventana Kaiser y detecta discontinuidades de impedancia en líneas y cables.',
+    icon: Radio,
+    badge: 'Análisis avanzado',
+  },
+  {
+    id: 'comparison',
+    title: 'Comparación de Prototipos',
+    description: 'Superpone múltiples medidas S-parameter, calcula estadísticas (media, std, envolventes) y compara prototipos de un mismo componente.',
+    icon: BarChart2,
+    badge: 'Estadística',
+  },
+  {
+    id: 'sequencer',
+    title: 'Secuenciador de Pruebas',
+    description: 'Automatiza flujos de medida RF con recetas de pasos: carga, extracción, modelo compacto, marcadores, base de datos e informe.',
+    icon: Cpu,
+    badge: 'Automatización',
   },
 ];
 

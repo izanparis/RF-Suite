@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+﻿import React, { useState, useRef, useEffect } from 'react';
+import { toast } from 'sonner';
 import { ToolShell } from '../ToolShell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card';
 import { Label } from '../ui/label';
@@ -74,7 +75,7 @@ export function SParamExtractionTool() {
       setCalFile(file);
       setSelectedCalName(""); // Quitamos la de servidor si se sube uno
     } else {
-      alert('Por favor, sube un archivo con extensión .cal');
+      toast.info('Por favor, sube un archivo con extensión .cal');
     }
   };
 
@@ -110,7 +111,7 @@ export function SParamExtractionTool() {
         setResult(data);
       } catch (error) {
         console.error(error);
-        alert('Error: ' + (error instanceof Error ? error.message : String(error)));
+        toast.error('Error: ' + (error instanceof Error ? error.message : String(error)));
       } finally {
         setLoading(false);
       }
@@ -232,11 +233,11 @@ export function SParamExtractionTool() {
                             body: formData
                           });
                           if (res.ok) {
-                            alert("Calibración guardada en el servidor.");
+                            toast.success("Calibración guardada en el servidor.");
                             fetchCalibrations();
                           }
                         } catch (err) {
-                          alert("Error al subir.");
+                          toast.error("Error al guardar calibración: " + err);
                         }
                       }}
                       className="text-xs text-primary hover:text-primary/80 bg-primary/10 px-2 py-1 rounded"
@@ -349,3 +350,5 @@ export function SParamExtractionTool() {
     </ToolShell>
   );
 }
+
+

@@ -25,6 +25,7 @@ interface SidebarProps {
   setIsOpen: (open: boolean) => void;
   backendStatus: 'checking' | 'online' | 'offline';
   collapsed: boolean;
+  recentFiles?: Array<{ name: string; tool: string; subtitle?: string }>;
 }
 
 const primaryNav = [
@@ -38,11 +39,14 @@ const primaryNav = [
   { id: 'library', label: 'Biblioteca', icon: Library },
 ];
 
-const rfToolIds = ['cutoff-freq', 'correction', 'tline-calc', 'cable-impedance'];
+const rfToolIds = ['cutoff-freq', 'correction', 'tline-calc', 'cable-impedance', 'deembed', 'quick-extract', 'batch'];
 
-export function Sidebar({ currentTool, onSelectTool, isOpen, setIsOpen, backendStatus, collapsed }: SidebarProps) {
+export function Sidebar({ currentTool, onSelectTool, isOpen, setIsOpen, backendStatus, collapsed, recentFiles: recentFilesProp }: SidebarProps) {
   const { t } = useLanguage();
   const backendOnline = backendStatus === 'online';
+
+  // Dynamic recent files — use prop from App (already kept in sync with localStorage)
+  const recentFiles = recentFilesProp ?? [];
 
   const selectTool = (tool: string) => {
     onSelectTool(tool);
@@ -114,24 +118,24 @@ export function Sidebar({ currentTool, onSelectTool, isOpen, setIsOpen, backendS
               <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Sesiones</span>
               <Clock3 className="h-3.5 w-3.5 text-muted-foreground" />
             </div>
-            {[
-              ['HP8752A S11', 'Calibracion reciente'],
-              ['Cable SMA', 'Medicion S2P'],
-              ['cap_470p', 'Modelo compacto'],
-            ].map(([title, subtitle]) => (
-              <button
-                key={title}
-                onClick={() => selectTool('library')}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              >
-                <BookOpen className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-semibold">{title}</span>
-                  <span className="block truncate text-[11px]">{subtitle}</span>
-                </span>
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            ))}
+            {recentFiles.length === 0 ? (
+              <p className="px-2 py-1.5 text-[11px] text-muted-foreground italic">Sin sesiones recientes</p>
+            ) : (
+              recentFiles.slice(0, 4).map((f, i) => (
+                <button
+                  key={i}
+                  onClick={() => selectTool(f.tool)}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                >
+                  <BookOpen className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-semibold">{f.name}</span>
+                    <span className="block truncate text-[11px]">{f.subtitle || f.tool}</span>
+                  </span>
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              ))
+            )}
           </section>
 
         </div>

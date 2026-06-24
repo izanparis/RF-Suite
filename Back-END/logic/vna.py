@@ -502,6 +502,74 @@ def _smooth_complex_trace(trace, window):
     imag = np.convolve(np.pad(np.imag(trace), pad, mode="edge"), kernel, mode="valid")
     return real + 1j * imag
 
+def generate_ieee_measurement_plot(freqs, s11, s21=None, port1=1, port2=2, is_one_port=True):
+    """Generate an IEEE Transactions-style S-parameter SVG plot."""
+    import io
+    import base64
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    _BLACK  = '#000000'
+    _BLUE   = '#0072BD'
+
+    plt.rcParams.update({
+        'font.family':        'serif',
+        'font.serif':         ['Times New Roman', 'DejaVu Serif', 'Liberation Serif', 'serif'],
+        'font.size':          9,
+        'axes.labelsize':     9,
+        'xtick.labelsize':    8,
+        'ytick.labelsize':    8,
+        'legend.fontsize':    8,
+        'axes.linewidth':     0.8,
+        'xtick.major.width':  0.8,
+        'ytick.major.width':  0.8,
+        'xtick.major.size':   4,
+        'ytick.major.size':   4,
+        'xtick.minor.size':   2,
+        'ytick.minor.size':   2,
+        'xtick.direction':    'in',
+        'ytick.direction':    'in',
+        'legend.framealpha':  1.0,
+        'legend.edgecolor':   _BLACK,
+        'legend.fancybox':    False,
+    })
+
+    fig, ax = plt.subplots(figsize=(5.0, 3.75))
+
+    freq_mhz = np.asarray(freqs) / 1e6
+    s11_db = 20 * np.log10(np.maximum(np.abs(s11), 1e-12))
+
+    ax.plot(freq_mhz, s11_db,
+            label=f'$S_{{{port1}{port1}}}$ (dB)',
+            color=_BLACK, linestyle='-', linewidth=1.2)
+
+    if not is_one_port and s21 is not None and len(s21) > 0:
+        s21_db = 20 * np.log10(np.maximum(np.abs(s21), 1e-12))
+        ax.plot(freq_mhz, s21_db,
+                label=f'$S_{{{port2}{port1}}}$ (dB)',
+                color=_BLUE, linestyle='--', linewidth=1.2)
+
+    ax.set_xlabel('Frequency (MHz)')
+    ax.set_ylabel('Magnitude (dB)')
+    ax.set_xlim(np.min(freq_mhz), np.max(freq_mhz))
+
+    # IEEE spines and grid
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.tick_params(which='both', direction='in', top=False, right=False)
+    ax.grid(True, which='major', linestyle=':', linewidth=0.4, color='#CCCCCC', zorder=0)
+
+    ax.legend(loc='best', frameon=True)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='svg', bbox_inches='tight', pad_inches=0.02)
+    buf.seek(0)
+    plot_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    plt.close(fig)
+
+    return plot_base64
+
 def process_sweep(vna, one_port=False, averaging_count=1, smoothing_window=1):
     averaging_count = max(1, int(averaging_count or 1))
     smoothing_window = max(1, int(smoothing_window or 1))
@@ -606,12 +674,14 @@ def process_sweep(vna, one_port=False, averaging_count=1, smoothing_window=1):
             
     touchstone_content = "\n".join(lines) + "\n"
 
+    plot_svg_base64 = generate_ieee_measurement_plot(freqs, s11, s21=s21, port1=1, port2=2, is_one_port=one_port)
     res = {
         "status": "success",
         "freqs": freqs.tolist(),
         "s11_real": np.real(s11).tolist(),
         "s11_imag": np.imag(s11).tolist(),
         "plot": plot_base64,
+        "plot_svg": plot_svg_base64,
         "touchstone_content": touchstone_content,
         "is_one_port": one_port
     }

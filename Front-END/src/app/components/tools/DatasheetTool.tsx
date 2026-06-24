@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { ToolShell } from '../ToolShell';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
@@ -128,7 +129,7 @@ export function DatasheetTool() {
 
   const saveMouserKey = async () => {
     if (!mouserKey.trim()) {
-      alert('Introduce la API key de Mouser.');
+      toast.info('Introduce la API key de Mouser.');
       return;
     }
     setLoading(true);
@@ -155,7 +156,7 @@ export function DatasheetTool() {
 
   const search = async () => {
     if (!query.trim()) {
-      alert('Introduce una referencia de componente.');
+      toast.info('Introduce una referencia de componente.');
       return;
     }
     setLoading(true);
@@ -216,7 +217,7 @@ export function DatasheetTool() {
 
   const downloadManual = async () => {
     if (!manualUrl.trim()) {
-      alert('Introduce una URL de datasheet.');
+      toast.info('Introduce una URL de datasheet.');
       return;
     }
     await downloadAndAttach({
@@ -239,7 +240,7 @@ export function DatasheetTool() {
 
   const saveMetadata = async () => {
     if (!selectedMeasurement) {
-      alert('Selecciona una medición antes de guardar metadatos.');
+      toast.info('Selecciona una medición antes de guardar metadatos.');
       return;
     }
     setLoading(true);
@@ -268,7 +269,7 @@ export function DatasheetTool() {
 
   const extractMetadata = async () => {
     if (!selectedMeasurement || !selectedEntry?.datasheet?.relative_path) {
-      alert('Selecciona una medición con datasheet fijado.');
+      toast.info('Selecciona una medición con datasheet fijado.');
       return;
     }
     setLoading(true);
@@ -298,11 +299,11 @@ export function DatasheetTool() {
 
   const completeFromMouser = async (result?: DatasheetResult) => {
     if (!selectedMeasurement) {
-      alert('Selecciona una medición antes de completar datos desde Mouser.');
+      toast.info('Selecciona una medición antes de completar datos desde Mouser.');
       return;
     }
     if (!result && !query.trim()) {
-      alert('Introduce una referencia o selecciona un resultado de Mouser.');
+      toast.info('Introduce una referencia o selecciona un resultado de Mouser.');
       return;
     }
 
@@ -642,3 +643,5 @@ export function DatasheetTool() {
     </ToolShell>
   );
 }
+
+

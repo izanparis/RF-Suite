@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Library, 
-  FileText, 
-  Activity, 
-  SlidersHorizontal, 
-  FolderOpen, 
-  Trash2, 
+import {
+  Library,
+  FileText,
+  Activity,
+  SlidersHorizontal,
+  FolderOpen,
+  Trash2,
   Search,
   ExternalLink,
   Clock,
@@ -16,20 +16,24 @@ import {
   FileSearch,
   Unlink,
   Eraser,
-  Image as ImageIcon
+  Image as ImageIcon,
+  ChevronUp,
+  ChevronDown,
+  Cpu,
+  BarChart2,
 } from 'lucide-react';
 import { Card, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { Badge } from '../ui/badge';
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
 } from '../ui/table';
 import {
   Select,
@@ -45,8 +49,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../ui/dialog';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '../ui/context-menu';
+import { Skeleton } from '../ui/skeleton';
 import { motion } from 'motion/react';
 import { useLanguage } from '../../lib/i18n';
+import { toast } from 'sonner';
+import { ConfirmDialog } from '../ConfirmDialog';
 
 interface LibraryItem {
   name: string;
@@ -120,6 +134,14 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
   });
   const [loading, setLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<LibraryItem | null>(null);
+  const [sortCol, setSortCol] = useState<'name' | 'device' | 'component' | 'date'>('date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    onConfirm: () => void;
+  } | null>(null);
   const [pdfViewer, setPdfViewer] = useState<{ title: string; url: string } | null>(null);
   const [generatingReport, setGeneratingReport] = useState(false);
 
@@ -142,7 +164,7 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
         newWindow.document.write(data.html_content);
         newWindow.document.close();
       } else {
-        alert("El navegador bloqueó la ventana emergente de previsualización. Descargando informe...");
+        toast.info("El navegador bloqueó la ventana emergente de previsualización. Descargando informe...");
       }
 
       // Download file
@@ -166,7 +188,7 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
 
     } catch (err) {
       console.error(err);
-      alert('Error al generar el informe: ' + err);
+      toast.error('Error al generar el informe: ' + err);
     } finally {
       setGeneratingReport(false);
     }
@@ -212,23 +234,29 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
     }
   };
 
-  const handleDelete = async (item: LibraryItem) => {
-    if (!confirm(`¿Estás seguro de que deseas eliminar "${item.name}"?`)) return;
-
-    try {
-      const componentParam = item.component_type ? `&component_type=${encodeURIComponent(item.component_type)}` : '';
-      const response = await fetch(`http://127.0.0.1:8080/api/library/delete?filename=${encodeURIComponent(item.name)}&type=${activeTab}&device=${encodeURIComponent(item.device || 'General')}${componentParam}`, {
-        method: 'DELETE'
-      });
-      if (response.ok) {
-        fetchLibrary();
-      } else {
-        const err = await response.json();
-        alert("Error: " + err.detail);
-      }
-    } catch (error) {
-      console.error('Error deleting file:', error);
-    }
+  const handleDelete = (item: LibraryItem) => {
+    setConfirmState({
+      open: true,
+      title: 'Eliminar archivo',
+      description: `¿Estás seguro de que deseas eliminar "${item.name}"?`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        try {
+          const componentParam = item.component_type ? `&component_type=${encodeURIComponent(item.component_type)}` : '';
+          const response = await fetch(`http://127.0.0.1:8080/api/library/delete?filename=${encodeURIComponent(item.name)}&type=${activeTab}&device=${encodeURIComponent(item.device || 'General')}${componentParam}`, {
+            method: 'DELETE'
+          });
+          if (response.ok) {
+            fetchLibrary();
+          } else {
+            const err = await response.json();
+            toast.error("Error: " + err.detail);
+          }
+        } catch (error) {
+          console.error('Error deleting file:', error);
+        }
+      },
+    });
   };
 
   const handleAnalyze = (item: LibraryItem) => {
@@ -272,10 +300,21 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
     return lastResponse;
   };
 
-  const detachDatasheet = async (item: LibraryItem) => {
+  const detachDatasheet = (item: LibraryItem) => {
     if (!item.datasheet?.relative_path) return;
     if (!item.relative_path) return;
-    if (!confirm(`¿Desanclar el datasheet de "${item.name}"? El PDF guardado no se elimina.`)) return;
+    setConfirmState({
+      open: true,
+      title: 'Desanclar datasheet',
+      description: `¿Desanclar el datasheet de "${item.name}"? El PDF guardado no se elimina.`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        await _doDetachDatasheet(item);
+      },
+    });
+  };
+
+  const _doDetachDatasheet = async (item: LibraryItem) => {
     try {
       const payload = JSON.stringify({ measurement_relative_path: item.relative_path });
       const response = await requestWithFallback([
@@ -298,14 +337,25 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
       await fetchLibrary();
       setSelectedItem(null);
     } catch (error) {
-      alert('Error desanclando datasheet: ' + (error instanceof Error ? error.message : String(error)));
+      toast.error('Error desanclando datasheet: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
 
-  const clearComponentValues = async (item: LibraryItem) => {
+  const clearComponentValues = (item: LibraryItem) => {
     if (!item.component_metadata) return;
     if (!item.relative_path) return;
-    if (!confirm(`¿Borrar los valores de componente de "${item.name}"?`)) return;
+    setConfirmState({
+      open: true,
+      title: 'Borrar valores de componente',
+      description: `¿Borrar los valores de componente de "${item.name}"?`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        await _doClearComponentValues(item);
+      },
+    });
+  };
+
+  const _doClearComponentValues = async (item: LibraryItem) => {
     try {
       const payload = JSON.stringify({ measurement_relative_path: item.relative_path });
       const response = await requestWithFallback([
@@ -328,7 +378,7 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
       await fetchLibrary();
       setSelectedItem(null);
     } catch (error) {
-      alert('Error borrando valores: ' + (error instanceof Error ? error.message : String(error)));
+      toast.error('Error borrando valores: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
 
@@ -342,7 +392,7 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
       }
       await fetchLibrary();
     } catch (error) {
-      alert('Error reconstruyendo índice: ' + (error instanceof Error ? error.message : String(error)));
+      toast.error('Error reconstruyendo índice: ' + (error instanceof Error ? error.message : String(error)));
       setLoading(false);
     }
   };
@@ -427,14 +477,23 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
     ].filter(([, value]) => value && value !== '-');
   };
 
-  const filteredItems = (activeTab === 'measurements' ? items.measurements : 
-                        activeTab === 'calibrations' ? items.calibrations : 
+  const filteredItems = (activeTab === 'measurements' ? items.measurements :
+                        activeTab === 'calibrations' ? items.calibrations :
                         items.extractions).filter(item => {
     const haystack = `${item.name} ${item.measurement_id || ''}`.toLowerCase();
     const matchesSearch = haystack.includes(searchTerm.toLowerCase());
     const matchesDevice = deviceFilter === 'all' || item.device === deviceFilter;
     const matchesComponent = activeTab !== 'measurements' || componentFilter === 'all' || item.component_type === componentFilter;
     return matchesSearch && matchesDevice && matchesComponent;
+  });
+
+  const sortedItems = [...filteredItems].sort((a, b) => {
+    let va = '', vb = '';
+    if (sortCol === 'name') { va = a.name; vb = b.name; }
+    else if (sortCol === 'device') { va = a.device || ''; vb = b.device || ''; }
+    else if (sortCol === 'component') { va = a.component_type || ''; vb = b.component_type || ''; }
+    else { return sortDir === 'asc' ? a.mtime - b.mtime : b.mtime - a.mtime; }
+    return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
   });
 
   const getIcon = (name: string) => {
@@ -556,33 +615,62 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
                   <Table>
                     <TableHeader className="bg-muted/30">
                       <TableRow>
-                        <TableHead className="w-[390px]">Nombre</TableHead>
-                        <TableHead className="w-[125px]">Dispositivo</TableHead>
-                        {activeTab === 'measurements' && <TableHead className="w-[120px]">Componente</TableHead>}
+                        <TableHead
+                          className="w-[390px] cursor-pointer select-none hover:bg-muted/50"
+                          onClick={() => { if (sortCol === 'name') setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortCol('name'); setSortDir('asc'); } }}
+                        >
+                          <span className="flex items-center gap-1">Nombre {sortCol === 'name' && (sortDir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}</span>
+                        </TableHead>
+                        <TableHead
+                          className="w-[125px] cursor-pointer select-none hover:bg-muted/50"
+                          onClick={() => { if (sortCol === 'device') setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortCol('device'); setSortDir('asc'); } }}
+                        >
+                          <span className="flex items-center gap-1">Dispositivo {sortCol === 'device' && (sortDir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}</span>
+                        </TableHead>
+                        {activeTab === 'measurements' && (
+                          <TableHead
+                            className="w-[120px] cursor-pointer select-none hover:bg-muted/50"
+                            onClick={() => { if (sortCol === 'component') setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortCol('component'); setSortDir('asc'); } }}
+                          >
+                            <span className="flex items-center gap-1">Componente {sortCol === 'component' && (sortDir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}</span>
+                          </TableHead>
+                        )}
+                        {activeTab === 'measurements' && <TableHead className="w-[140px]">Métricas</TableHead>}
                         {activeTab === 'measurements' && <TableHead>Metadata</TableHead>}
                         <TableHead className="w-[210px] text-right">Acciones</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {loading ? (
-                        Array.from({ length: 5 }).map((_, i) => (
+                        Array.from({ length: 6 }).map((_, i) => (
                           <TableRow key={i}>
-                            {Array.from({ length: activeTab === 'measurements' ? 5 : 3 }).map((_, j) => (
-                              <TableCell key={j}><div className="h-4 w-full bg-muted animate-pulse rounded" /></TableCell>
-                            ))}
+                            <TableCell><div className="flex items-center gap-2"><Skeleton className="w-4 h-4 rounded" /><Skeleton className="h-3 w-48" /></div></TableCell>
+                            <TableCell><Skeleton className="h-3 w-24" /></TableCell>
+                            {activeTab === 'measurements' && <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>}
+                            {activeTab === 'measurements' && <TableCell><Skeleton className="h-3 w-16" /></TableCell>}
+                            {activeTab === 'measurements' && <TableCell><Skeleton className="h-3 w-32" /></TableCell>}
+                            <TableCell><div className="flex gap-1 justify-end"><Skeleton className="h-7 w-16 rounded" /><Skeleton className="h-7 w-7 rounded" /></div></TableCell>
                           </TableRow>
                         ))
-                      ) : filteredItems.length > 0 ? (
-                        filteredItems.map((item, idx) => (
-                          <TableRow 
-                            key={idx} 
+                      ) : sortedItems.length > 0 ? (
+                        sortedItems.map((item, idx) => (
+                          <ContextMenu key={idx}>
+                            <ContextMenuTrigger asChild>
+                          <TableRow
                             className="group hover:bg-muted/30 transition-colors cursor-pointer"
                             onClick={() => setSelectedItem(item)}
                           >
                             <TableCell className="w-[420px] font-medium">
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-2">
                                 {getIcon(item.name)}
-                                <span className="truncate max-w-[320px]" title={item.name}>{item.name}</span>
+                                <div className="min-w-0">
+                                  <p className="font-medium text-sm truncate max-w-[300px]" title={item.name}>{item.name}</p>
+                                  {item.fmin_hz && item.fmax_hz && (
+                                    <span className="inline-flex items-center rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground mt-0.5">
+                                      {formatFreq(item.fmin_hz)}–{formatFreq(item.fmax_hz)}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </TableCell>
                             <TableCell className="w-[135px]">
@@ -706,10 +794,28 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
                               </div>
                             </TableCell>
                           </TableRow>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent>
+                              <ContextMenuItem onSelect={() => handleAnalyze(item)}>
+                                <Activity className="mr-2 h-4 w-4" /> Analizar S-param
+                              </ContextMenuItem>
+                              <ContextMenuItem onSelect={() => handleAnalyze(item)}>
+                                <Cpu className="mr-2 h-4 w-4" /> Modelo Compacto
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onSelect={() => openLocation(item)}>
+                                <FolderOpen className="mr-2 h-4 w-4" /> Abrir carpeta
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onSelect={() => handleDelete(item)} className="text-destructive focus:text-destructive">
+                                <Trash2 className="mr-2 h-4 w-4" /> Eliminar
+                              </ContextMenuItem>
+                            </ContextMenuContent>
+                          </ContextMenu>
                         ))
                       ) : (
                         <TableRow>
-                          <TableCell colSpan={activeTab === 'measurements' ? 5 : 3} className="h-64 text-center">
+                          <TableCell colSpan={activeTab === 'measurements' ? 6 : 3} className="h-64 text-center">
                             <div className="flex flex-col items-center justify-center text-muted-foreground">
                               <Library className="w-12 h-12 mb-4 opacity-10" />
                               <p className="text-sm font-medium">{t('library.empty')}</p>
@@ -889,6 +995,16 @@ export function LibraryTool({ onAnalyze }: LibraryToolProps) {
           )}
         </DialogContent>
       </Dialog>
+      {confirmState && (
+        <ConfirmDialog
+          open={confirmState.open}
+          title={confirmState.title}
+          description={confirmState.description}
+          onConfirm={confirmState.onConfirm}
+          onCancel={() => setConfirmState(null)}
+          destructive
+        />
+      )}
     </div>
   );
 }

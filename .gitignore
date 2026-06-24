@@ -55,6 +55,10 @@ Thumbs.db
 # --- Gemini / Local ---
 .gemini/
 
+# --- Claude Code ---
+.claude/
+CLAUDE.md
+
 # --- Custom Exclusions ---
 Documentación/
 notebooks/

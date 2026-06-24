@@ -22,6 +22,8 @@ interface TopCommandBarProps {
   onSelectTool: (tool: string) => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
+  onOpenCommandPalette?: () => void;
+  vnaDevice?: string | null;
 }
 
 const tabs = [
@@ -32,7 +34,7 @@ const tabs = [
   { id: 'library', label: 'Biblioteca', icon: Library },
 ];
 
-export function TopCommandBar({ currentTool, backendStatus, onSelectTool, sidebarCollapsed, onToggleSidebar }: TopCommandBarProps) {
+export function TopCommandBar({ currentTool, backendStatus, onSelectTool, sidebarCollapsed, onToggleSidebar, onOpenCommandPalette, vnaDevice }: TopCommandBarProps) {
   const backendOnline = backendStatus === 'online';
 
   return (
@@ -78,16 +80,24 @@ export function TopCommandBar({ currentTool, backendStatus, onSelectTool, sideba
           })}
         </nav>
 
-        <div className="flex h-8 min-w-[160px] max-w-xl flex-1 items-center gap-2 rounded-md border border-border bg-card px-3 text-muted-foreground shadow-sm [app-region:no-drag]">
+        <div
+          className="flex h-8 min-w-[160px] max-w-xl flex-1 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 text-muted-foreground shadow-sm [app-region:no-drag] hover:border-primary/50 hover:bg-muted/50 transition-colors"
+          onClick={() => onOpenCommandPalette?.()}
+        >
           <Search className="h-3.5 w-3.5 shrink-0" />
-          <input
-            className="h-full min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
-            placeholder="Buscar herramienta, archivo o comando"
-          />
+          <span className="h-full min-w-0 flex-1 text-xs text-muted-foreground select-none">
+            Buscar herramienta, archivo o comando
+          </span>
           <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Ctrl K</span>
         </div>
 
         <div className="ml-auto hidden shrink-0 items-center gap-1.5 [app-region:no-drag] xl:flex">
+          {vnaDevice && (
+            <span className="hidden xl:inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground">
+              <Activity className="h-3.5 w-3.5 text-blue-500" />
+              <span>{vnaDevice}</span>
+            </span>
+          )}
           <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground">
             <Wifi className={cn('h-3.5 w-3.5', backendOnline ? 'text-[var(--rf-success)]' : 'text-destructive')} />
             <span className="hidden xl:inline">{backendStatus === 'checking' ? 'API...' : backendOnline ? 'Online' : 'Offline'}</span>

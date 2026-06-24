@@ -297,33 +297,84 @@ def _css() -> str:
         text-decoration: underline;
     }
 
-    /* IEEE Sections */
+    /* ── Metric Scorecard ─────────────────────────────────────── */
+    .scorecard {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+        gap: 14px;
+        margin: 0 0 42px 0;
+    }
+    .metric-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-top: 3px solid #0f52ba;
+        border-radius: 6px;
+        padding: 14px 16px 12px;
+        text-align: center;
+        box-shadow: 0 2px 8px -2px rgba(15,82,186,.07);
+    }
+    .metric-card.accent-green  { border-top-color: #16a34a; }
+    .metric-card.accent-amber  { border-top-color: #d97706; }
+    .metric-card.accent-red    { border-top-color: #dc2626; }
+    .metric-card.accent-purple { border-top-color: #7c3aed; }
+    .metric-card-value {
+        font-family: 'Lora', Georgia, serif;
+        font-size: 22px;
+        font-weight: 700;
+        color: #0f172a;
+        line-height: 1.1;
+        margin-bottom: 4px;
+        word-break: break-all;
+    }
+    .metric-card-unit {
+        font-size: 11px;
+        font-weight: 600;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .metric-card-label {
+        font-size: 10.5px;
+        color: #94a3b8;
+        margin-top: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        font-weight: 500;
+    }
+    @media print {
+        .scorecard { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    /* ── IEEE Sections ─────────────────────────────────────────── */
     .section-container {
         margin-bottom: 45px;
         page-break-inside: avoid;
     }
     .section-header {
         font-family: 'Lora', Georgia, serif;
-        font-size: 18px;
+        font-size: 16px;
         font-weight: 700;
-        color: #0f52ba;
-        border-bottom: 1px solid #e2e8f0;
-        padding-bottom: 8px;
+        color: #0f172a;
+        border-left: 4px solid #0f52ba;
+        background: linear-gradient(90deg, #f0f6ff 0%, #ffffff 100%);
+        padding: 10px 16px 10px 14px;
         margin-top: 40px;
         margin-bottom: 20px;
         text-transform: uppercase;
         letter-spacing: 1px;
         display: flex;
-        align-items: baseline;
+        align-items: center;
+        border-radius: 0 6px 6px 0;
     }
     .section-num {
-        margin-right: 12px;
+        margin-right: 10px;
         font-family: 'Lora', Georgia, serif;
         color: #0f52ba;
         font-weight: 700;
     }
     .section-text-inner {
         font-weight: 700;
+        color: #0f52ba;
     }
     .section-desc {
         font-size: 14.5px;
@@ -358,25 +409,41 @@ def _css() -> str:
         overflow: hidden;
     }
     .data-table th {
-        background-color: #f1f5f9;
-        border-bottom: 1px solid #e2e8f0;
-        color: #1e293b;
+        background-color: #0f52ba;
+        border-bottom: 1px solid #0d46a0;
+        color: #ffffff;
         font-weight: 600;
-        padding: 10px 14px;
+        padding: 9px 14px;
         text-align: left;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
     }
     .data-table td {
         border-bottom: 1px solid #f1f5f9;
-        padding: 10px 14px;
+        padding: 9px 14px;
         color: #334155;
         vertical-align: middle;
         background-color: #ffffff;
     }
+    .data-table td:first-child {
+        font-weight: 600;
+        color: #1e293b;
+        background-color: #f8fafc;
+        border-right: 1px solid #e2e8f0;
+        width: 42%;
+    }
     .data-table tr:last-child td {
         border-bottom: none;
     }
+    .data-table tr:nth-child(even) td:not(:first-child) {
+        background-color: #fafbfd;
+    }
     .data-table tr:hover td {
-        background-color: #f8fafc;
+        background-color: #eff6ff;
+    }
+    .data-table tr:hover td:first-child {
+        background-color: #e8f0fe;
     }
     
     /* Figures */
@@ -584,14 +651,32 @@ def _render_table(caption: str, table_id: str, headers: list, rows: list) -> str
     </div>
     """
 
-def _render_figure(base64_img: str, caption: str, fig_num: int) -> str:
-    """Renders a figure with base64 embedded image, caption below, and an anchor id."""
+def _detect_img_mime(b64: str) -> str:
+    """Sniff MIME type from the first bytes of a raw base64 image string."""
+    try:
+        raw = base64.b64decode(b64[:300].encode() + b"==")
+        if raw[:4] == b'\x89PNG':
+            return "image/png"
+        if raw[:2] == b'\xff\xd8':
+            return "image/jpeg"
+        if b'<svg' in raw[:120] or b'<?xml' in raw[:120]:
+            return "image/svg+xml"
+    except Exception:
+        pass
+    return "image/png"  # safe fallback
+
+def _render_figure(base64_img: str, caption: str, fig_num: int, full_width: bool = False) -> str:
+    """Renders a figure with auto-detected MIME type (SVG or PNG), caption below."""
     if not base64_img:
         return ""
-    # Ensure it has correct prefix
-    img_src = base64_img if base64_img.startswith("data:image/") else f"data:image/png;base64,{base64_img}"
+    if base64_img.startswith("data:image/"):
+        img_src = base64_img
+    else:
+        mime = _detect_img_mime(base64_img)
+        img_src = f"data:{mime};base64,{base64_img}"
+    width_style = "max-width: 100%;" if full_width else ""
     return f"""
-    <div class="figure-container" id="fig-{fig_num}">
+    <div class="figure-container" id="fig-{fig_num}" style="{width_style}">
         <div class="figure-img-wrapper">
             <img class="figure-img" src="{img_src}" alt="Figure {fig_num}" />
         </div>
@@ -601,6 +686,96 @@ def _render_figure(base64_img: str, caption: str, fig_num: int) -> str:
         </div>
     </div>
     """
+
+def _render_scorecard(history: dict, entry: dict) -> str:
+    """
+    Builds a row of metric cards from whatever analysis data is available.
+    Cards shown depend on which tools were run.
+    """
+    cards = []
+
+    def _card(value: str, unit: str, label: str, accent: str = "") -> str:
+        cls = f"metric-card {accent}".strip()
+        return f"""
+        <div class="{cls}">
+            <div class="metric-card-value">{value}</div>
+            <div class="metric-card-unit">{unit}</div>
+            <div class="metric-card-label">{label}</div>
+        </div>"""
+
+    def _si(val, unit):
+        """Format a value with SI prefix (p/n/µ/m/k/M/G)."""
+        if not isinstance(val, (int, float)):
+            return "—", unit
+        prefixes = [
+            (1e12, 'T'), (1e9, 'G'), (1e6, 'M'), (1e3, 'k'),
+            (1, ''), (1e-3, 'm'), (1e-6, 'µ'), (1e-9, 'n'), (1e-12, 'p'),
+        ]
+        for scale, prefix in prefixes:
+            if abs(val) >= scale * 0.999:
+                return f"{val/scale:.3g}", f"{prefix}{unit}"
+        return f"{val:.3g}", unit
+
+    # ── Nominal value ──────────────────────────────────────────────
+    quick = history.get("quick_extract", {})
+    shunt = history.get("compact_model_shunt", {})
+    vf    = history.get("compact_model_vf", {})
+    any_model = shunt or vf or history.get("compact_model", {})
+
+    nom_val  = quick.get("nominal_value")
+    nom_unit = quick.get("unit", "F")
+    if nom_val is None:
+        # fall back to compact model
+        sm = (shunt or vf or history.get("compact_model", {})).get("summary", {})
+        nom_val  = sm.get("c_eff", sm.get("l_eff"))
+        nom_unit = "H" if "l_eff" in sm else "F"
+    if nom_val is not None:
+        v_str, u_str = _si(nom_val, nom_unit)
+        cards.append(_card(v_str, u_str, "Nominal Value"))
+
+    # ── SRF ───────────────────────────────────────────────────────
+    srf_hz = quick.get("srf_hz") or (history.get("cutoff_freq", {}).get("cutoff_frequency_mhz", None) and
+                                      history["cutoff_freq"]["cutoff_frequency_mhz"] * 1e6)
+    if srf_hz and isinstance(srf_hz, (int, float)):
+        v_str, u_str = _si(srf_hz, "Hz")
+        cards.append(_card(v_str, u_str, "SRF", "accent-amber"))
+
+    # ── ESR ───────────────────────────────────────────────────────
+    esr = quick.get("esr")
+    if esr and isinstance(esr, (int, float)):
+        cards.append(_card(f"{esr:.4f}", "Ω", "ESR"))
+
+    # ── Q-factor ──────────────────────────────────────────────────
+    q = quick.get("q_factor")
+    if q and isinstance(q, (int, float)):
+        accent = "accent-green" if q > 50 else ("accent-amber" if q > 10 else "accent-red")
+        cards.append(_card(f"{q:.1f}", "", "Q Factor", accent))
+
+    # ── Best NRMS ─────────────────────────────────────────────────
+    nrms_vals = []
+    for d in [shunt, vf, history.get("compact_model", {})]:
+        n = d.get("summary", {}).get("nrms", d.get("nrms"))
+        if isinstance(n, (int, float)):
+            nrms_vals.append(n)
+    if nrms_vals:
+        best = min(nrms_vals)
+        accent = "accent-green" if best < 0.05 else ("accent-amber" if best < 0.15 else "accent-red")
+        cards.append(_card(f"{best*100:.2f}", "%", "Best NRMS", accent))
+
+    # ── Frequency span ───────────────────────────────────────────
+    fmin = entry.get("fmin_hz")
+    fmax = entry.get("fmax_hz")
+    if fmin and fmax:
+        _, u1 = _si(fmin, "Hz");  v1, _ = _si(fmin, "Hz")
+        v2, u2 = _si(fmax, "Hz")
+        cards.append(_card(f"{v1}–{v2}", u2, "Freq. Range", "accent-purple"))
+
+    if not cards:
+        return ""
+
+    inner = "".join(cards)
+    return f'<div class="scorecard">{inner}</div>'
+
 
 def _render_code_block(code: str, title: str) -> str:
     """Renders a code block for netlists or textual summaries."""
@@ -612,89 +787,113 @@ def _render_code_block(code: str, title: str) -> str:
     """
 
 def _generate_s_params_plots(touchstone_path: str) -> list:
-    """Generates base64 S-parameter plots on the fly from a touchstone file if scikit-rf is available."""
+    """Generates IEEE-style base64 PNG S-parameter plots from a touchstone file."""
+    _IEEE_BLACK = '#000000'
+    _IEEE_BLUE  = '#0072BD'
+    _IEEE_RED   = '#D62728'
+    _FIG_W, _FIG_H = 5.0, 3.75
+
+    def _ieee_rc():
+        plt.rcParams.update({
+            'font.family': 'serif',
+            'font.serif': ['Times New Roman', 'DejaVu Serif', 'serif'],
+            'font.size': 9,
+            'axes.labelsize': 9,
+            'xtick.labelsize': 8,
+            'ytick.labelsize': 8,
+            'legend.fontsize': 8,
+            'lines.linewidth': 1.2,
+            'figure.dpi': 150,
+        })
+
+    def _apply_ax(ax, xlabel, ylabel, log_x=False, log_y=False):
+        ax.set_xlabel(xlabel, fontsize=9)
+        ax.set_ylabel(ylabel, fontsize=9)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.tick_params(which='both', direction='in', top=False, right=False)
+        ax.grid(True, which='major', linestyle=':', linewidth=0.4, color='#CCCCCC', zorder=0)
+        if log_x: ax.set_xscale('log')
+        if log_y: ax.set_yscale('log')
+        ax.legend(loc='best', frameon=True, framealpha=0.9, edgecolor='#CCCCCC')
+
+    def get_b64(fig):
+        import io
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', pad_inches=0.02)
+        buf.seek(0)
+        b64 = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close(fig)
+        return b64
+
     plots = []
     try:
         if not os.path.exists(touchstone_path):
-            logging.error(f"Cannot generate S-parameter plots on the fly: {touchstone_path} does not exist")
+            logging.error(f"_generate_s_params_plots: file not found {touchstone_path}")
             return []
-            
+
+        _ieee_rc()
         ntw = rf.Network(touchstone_path)
         freq_mhz = ntw.f / 1e6
         n_ports = ntw.nports
         has_s21 = n_ports >= 2
-        
-        def get_b64(fig):
-            import io
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-            buf.seek(0)
-            b64 = base64.b64encode(buf.read()).decode('utf-8')
-            plt.close(fig)
-            return b64
 
-        # 1. S11 Magnitude
-        fig = plt.figure(figsize=(8.5, 5.2))
-        plt.plot(freq_mhz, ntw.s_db[:, 0, 0], label='S11 (dB)', color='#0877c9', linewidth=1.5)
-        plt.title('S11 Magnitude Response')
-        plt.xlabel('Frequency (MHz)')
-        plt.ylabel('Magnitude (dB)')
-        plt.grid(True, alpha=0.3)
-        plt.legend(loc='best')
-        plots.append({"id": "s11", "title": "S11 (dB)", "image": get_b64(fig)})
-
-        # 2. S21 Magnitude (if 2 ports)
+        # 1. S-parameter magnitude (S11 + S21)
+        fig, ax = plt.subplots(figsize=(_FIG_W, _FIG_H))
+        ax.plot(freq_mhz, ntw.s_db[:, 0, 0], label=r'$S_{11}$ (dB)',
+                color=_IEEE_BLACK, linestyle='-', linewidth=1.2)
         if has_s21:
-            fig = plt.figure(figsize=(8.5, 5.2))
-            plt.plot(freq_mhz, ntw.s_db[:, 1, 0], label='S21 (dB)', color='#ef4444', linewidth=1.5)
-            plt.title('S21 Magnitude Response')
-            plt.xlabel('Frequency (MHz)')
-            plt.ylabel('Magnitude (dB)')
-            plt.grid(True, alpha=0.3)
-            plt.legend(loc='best')
-            plots.append({"id": "s21", "title": "S21 (dB)", "image": get_b64(fig)})
+            ax.plot(freq_mhz, ntw.s_db[:, 1, 0], label=r'$S_{21}$ (dB)',
+                    color=_IEEE_BLUE, linestyle='--', linewidth=1.2)
+        _apply_ax(ax, 'Frequency (MHz)', 'Magnitude (dB)')
+        fig.tight_layout()
+        plots.append({"id": "smag", "title": r"S-Parameter Magnitude", "image": get_b64(fig)})
 
-        # 3. Z Magnitude
-        fig = plt.figure(figsize=(8.5, 5.2))
+        # 2. S-parameter phase
+        fig, ax = plt.subplots(figsize=(_FIG_W, _FIG_H))
+        ax.plot(freq_mhz, ntw.s_deg[:, 0, 0], label=r'$\angle S_{11}$ (°)',
+                color=_IEEE_BLACK, linestyle='-', linewidth=1.2)
+        if has_s21:
+            ax.plot(freq_mhz, ntw.s_deg[:, 1, 0], label=r'$\angle S_{21}$ (°)',
+                    color=_IEEE_BLUE, linestyle='--', linewidth=1.2)
+        _apply_ax(ax, 'Frequency (MHz)', 'Phase (degrees)')
+        fig.tight_layout()
+        plots.append({"id": "sphase", "title": "S-Parameter Phase", "image": get_b64(fig)})
+
+        # 3. Impedance magnitude
+        fig, ax = plt.subplots(figsize=(_FIG_W, _FIG_H))
         if n_ports == 1:
-            z_in = np.abs(ntw.z[:, 0, 0])
-            plt.loglog(freq_mhz, z_in, color='purple', label='|Z_in|', linewidth=1.5)
-            plt.title('Input Impedance |Z_in|')
+            z_mag = np.abs(ntw.z[:, 0, 0])
+            ax.loglog(freq_mhz, np.maximum(z_mag, 1e-12),
+                      label=r'$|Z_{in}|$ ($\Omega$)', color=_IEEE_BLACK, linewidth=1.2)
         else:
             abcd = ntw.a
-            z_series = np.maximum(np.abs(abcd[:, 0, 1]), 1e-12)
-            y_shunt = abcd[:, 1, 0]
-            z_shunt = np.maximum(np.abs(1.0 / (y_shunt + 1e-30)), 1e-12)
-            plt.loglog(freq_mhz, z_series, color='purple', label='|Z_series|', linewidth=1.5)
-            plt.loglog(freq_mhz, z_shunt, color='brown', label='|Z_shunt|', linestyle='--', linewidth=1.5)
-            plt.title('Extracted Impedance Magnitude')
-        plt.xlabel('Frequency (MHz)')
-        plt.ylabel('Impedance (Ohm)')
-        plt.grid(True, which="both", ls="-", alpha=0.2)
-        plt.legend(loc='best')
-        plots.append({"id": "zmag", "title": "Impedance |Z|", "image": get_b64(fig)})
+            z_ser = np.maximum(np.abs(abcd[:, 0, 1]), 1e-12)
+            y_sh  = abcd[:, 1, 0]
+            z_sh  = np.maximum(np.abs(1.0 / (y_sh + 1e-30)), 1e-12)
+            ax.loglog(freq_mhz, z_ser, label=r'$|Z_{series}|$ ($\Omega$)',
+                      color=_IEEE_BLACK, linewidth=1.2)
+            ax.loglog(freq_mhz, z_sh,  label=r'$|Z_{shunt}|$ ($\Omega$)',
+                      color=_IEEE_BLUE, linestyle='--', linewidth=1.2)
+        ax.grid(True, which='both', linestyle=':', linewidth=0.4, color='#CCCCCC', zorder=0)
+        ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+        ax.tick_params(which='both', direction='in', top=False, right=False)
+        ax.set_xlabel('Frequency (MHz)', fontsize=9)
+        ax.set_ylabel(r'$|Z|$ ($\Omega$)', fontsize=9)
+        ax.legend(loc='best', frameon=True, framealpha=0.9, edgecolor='#CCCCCC', fontsize=8)
+        fig.tight_layout()
+        plots.append({"id": "zmag", "title": r"Impedance $|Z|$", "image": get_b64(fig)})
 
-        # 4. Phase
-        fig = plt.figure(figsize=(8.5, 5.2))
-        plt.plot(freq_mhz, ntw.s_deg[:, 0, 0], label='S11 Phase (°)', color='#0877c9', linewidth=1.5)
-        if has_s21:
-            plt.plot(freq_mhz, ntw.s_deg[:, 1, 0], label='S21 Phase (°)', color='#ef4444', linewidth=1.5)
-        plt.title('S-Parameter Phase Response')
-        plt.xlabel('Frequency (MHz)')
-        plt.ylabel('Phase (degrees)')
-        plt.grid(True, alpha=0.3)
-        plt.legend(loc='best')
-        plots.append({"id": "phase", "title": "Phase (degrees)", "image": get_b64(fig)})
-
-        # 5. Smith S11
-        fig = plt.figure(figsize=(7.5, 7.5))
-        ntw.plot_s_smith(m=0, n=0, label='S11', color='#0877c9')
-        plt.title('Smith Chart S11')
-        plots.append({"id": "smith11", "title": "Smith S11", "image": get_b64(fig)})
+        # 4. Smith chart
+        fig, ax = plt.subplots(figsize=(4.5, 4.5))
+        ntw.plot_s_smith(m=0, n=0, label=r'$S_{11}$', color=_IEEE_BLACK, ax=ax)
+        ax.set_title('Smith Chart', fontsize=9, fontfamily='serif')
+        fig.tight_layout()
+        plots.append({"id": "smith11", "title": r"Smith Chart $S_{11}$", "image": get_b64(fig)})
 
     except Exception as e:
-        logging.error(f"Error generating S-parameter plots dynamically: {e}")
-        
+        logging.error(f"Error in _generate_s_params_plots: {e}")
+
     return plots
 
 def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str:
@@ -768,7 +967,7 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
     fmin_mhz = f"{entry.get('fmin_hz', 0) / 1e6:.3f} MHz" if entry.get("fmin_hz") else "N/A"
     fmax_mhz = f"{entry.get('fmax_hz', 0) / 1e6:.3f} MHz" if entry.get("fmax_hz") else "N/A"
     n_ports = entry.get("n_ports", 2)
-    comp_type_str = entry.get("component_type", "unknown component").upper()
+    comp_type_str = (entry.get("component_type") or "unknown component").upper()
     
     abstract_text = f"This technical paper presents the systematic characterization of the high-frequency response and equivalent circuit parameter extraction for the {comp_type_str} device under test (DUT), identified as {measurement_id}. The experimental measurements were recorded using the {device_name} platform over a frequency range of {fmin_mhz} to {fmax_mhz} across {points} data points. The electrical performance is analyzed through experimental scattering parameters (S-parameters), resonant characteristics, and physics-based circuit modeling. The equivalent circuit models are fit against experimental data using numerical optimization routines, demonstrating high correlation and low normalized root-mean-square error (NRMS). This document provides an index of all findings compiled by the RF & Signal Integrity Suite."
     
@@ -778,6 +977,9 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
     </div>
     """
     
+    # ── Metric Scorecard (after abstract) ────────────────────────
+    scorecard_html = _render_scorecard(history, entry)
+
     # Figure counter and Table counter
     fig_counter = 1
     table_counter = 1
@@ -1099,30 +1301,82 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         unit = quick_data.get("unit", "")
         srf_hz = quick_data.get("srf_hz")
         esr = quick_data.get("esr")
-        
-        val_str = f"{nominal_value:.4e} {unit}" if isinstance(nominal_value, (int, float)) else "N/A"
-        srf_mhz_str = f"{srf_hz / 1e6:.3f} MHz" if isinstance(srf_hz, (int, float)) else "N/A"
-        esr_str = f"{esr:.3f} Ohm" if isinstance(esr, (int, float)) else "N/A"
-        
+        q_factor = quick_data.get("q_factor")
+        quality = quick_data.get("quality", "")
+        quality_score = quick_data.get("quality_score")
+        model_params = quick_data.get("model_params", {})
+
+        def _fmt(v, digits=4, suffix=""):
+            return f"{v:.{digits}g}{suffix}" if isinstance(v, (int, float)) else "N/A"
+
+        val_str     = f"{nominal_value:.4e} {unit}" if isinstance(nominal_value, (int, float)) else "N/A"
+        srf_mhz_str = f"{srf_hz / 1e6:.3f} MHz"   if isinstance(srf_hz, (int, float)) else "N/A"
+        esr_str     = f"{esr:.4f} Ω"               if isinstance(esr, (int, float)) else "N/A"
+        q_str       = f"{q_factor:.1f}"             if isinstance(q_factor, (int, float)) else "N/A"
+        qual_str    = f"{quality} (score {quality_score:.2f})" if isinstance(quality_score, (int, float)) else quality or "N/A"
+
         quick_rows = [
-            ["Extracted Nominal Value", val_str],
-            ["Extracted Self-Resonant Frequency (SRF)", srf_mhz_str],
-            ["Extracted Equivalent Series Resistance (ESR)", esr_str]
+            ["Nominal Component Value", val_str],
+            ["Self-Resonant Frequency (SRF)", srf_mhz_str],
+            ["Equivalent Series Resistance (ESR)", esr_str],
+            ["Quality Factor Q (at nominal freq.)", q_str],
+            ["Extraction Window Quality", qual_str],
         ]
         table_vi_html = _render_table(
-            caption="Quick Component Extraction Lumped Value & Parasitics",
+            caption="Quick Component Extraction: Lumped Values and Parasitics",
             table_id="VI",
-            headers=["Lumped Component Parameter", "Extracted Value"],
+            headers=["Parameter", "Extracted Value"],
             rows=quick_rows
         )
+
+        vi_content = (
+            "This section reports the nominal physical parameters and key parasitics extracted "
+            "using a pre-resonant windowing algorithm with slope/phase quality scoring "
+            "(SOTA dispersive model). The Q-factor is evaluated at the nominal operating "
+            "frequency.\n" + table_vi_html
+        )
+
+        # Dispersive model sub-table
+        if model_params:
+            Rdc    = model_params.get("Rdc")
+            Rskin  = model_params.get("Rskin")
+            alpha  = model_params.get("alpha")
+            beta   = model_params.get("beta")
+            disp_rows = [
+                ["DC Resistance R_dc",         _fmt(Rdc,   4, " Ω")],
+                ["Skin-effect coefficient R_skin", _fmt(Rskin, 4, " Ω/√Hz")],
+                ["Capacitance dispersion exponent α", _fmt(alpha, 4)],
+                ["ESR frequency exponent β",   _fmt(beta,  4)],
+            ]
+            table_via_html = _render_table(
+                caption="SOTA Dispersive Model Parameters",
+                table_id="VI-A",
+                headers=["Dispersive Model Parameter", "Extracted Value"],
+                rows=disp_rows
+            )
+            vi_content += f"""
+            <div id="sec-vi-a" style="margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 15px;">
+                <h3 style="font-family: 'Lora', serif; font-size: 15px; color: #0f52ba; margin-bottom: 12px;">
+                    VI-A. State-of-the-Art Dispersive Model
+                </h3>
+                <p class="section-desc" style="font-size: 13.5px; color: #475569;">
+                    Frequency-dependent parameters are fitted to the SOTA dispersive model:
+                    C(f) = C₀·(f/f_ref)<sup>−α</sup>,  R(f) = R_dc + R_skin·√f.
+                </p>
+                {table_via_html}
+            </div>"""
+            toc_tables.append(("Table VI-A. SOTA Dispersive Model Parameters", "#table-vi-a"))
+            table_counter += 1
+            toc_sections.append(("&nbsp;&nbsp;&bull; VI-A. SOTA Dispersive Model", "#sec-vi-a"))
+
         sections_html += _render_section(
-            title="Quick Lumped Parameter & Parasitics Extraction",
+            title="Quick Lumped Parameter and Parasitics Extraction",
             number="VI",
             section_id="sec-vi",
-            content="This section reports the rapidly extracted nominal physical parameters and crucial parasitics, including the high-frequency Equivalent Series Resistance (ESR) and self-resonance.\n" + table_vi_html
+            content=vi_content
         )
         toc_sections.append(("VI. Quick Lumped Parameter & Parasitics Extraction", "#sec-vi"))
-        toc_tables.append(("Table VI. Quick Component Extraction Lumped Value & Parasitics", "#table-vi"))
+        toc_tables.append(("Table VI. Quick Component Extraction — Lumped Values", "#table-vi"))
         table_counter += 1
         
     # --- Section VII: SAMM Topology Recommendation ---
@@ -1173,16 +1427,92 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         toc_sections.append(("VII. Systematic Multi-Model Topology Synthesis (SAMM)", "#sec-vii"))
         toc_tables.append(("Table VII. SAMM Multi-Model Topology Fitting Recommendations", "#table-vii"))
         
-    # --- Section VIII: Datasheet Reference ---
+    # --- Section VIII: De-Embedding Results ---
+    deembed_data = history.get("deembedding", {})
+    if deembed_data:
+        de_summary  = deembed_data.get("summary", deembed_data)
+        fm          = de_summary.get("fixture_model", de_summary.get("topology", "N/A"))
+        topo        = de_summary.get("dut_topology", "N/A")
+        z0_val      = de_summary.get("z0", 50.0)
+        n_pts       = de_summary.get("n_points", "N/A")
+        fmin_de     = de_summary.get("freq_min_mhz")
+        fmax_de     = de_summary.get("freq_max_mhz")
+        nrms_raw    = de_summary.get("nrms_raw")
+        nrms_de     = de_summary.get("nrms_deembed")
+
+        def _mhz(v): return f"{v:.3f} MHz" if isinstance(v, (int, float)) else "N/A"
+        def _pct(v): return f"{v*100:.2f} %" if isinstance(v, (int, float)) else "N/A"
+
+        _FIXTURE_LABELS = {
+            "pi":          "π-model — Open-Short (Koolen, 1991)",
+            "t":           "T-model — Dual Open-Short",
+            "series_only": "Series-only (Short standard)",
+            "shunt_only":  "Shunt-only (Open standard)",
+        }
+        fm_label = _FIXTURE_LABELS.get(fm, fm)
+
+        de_rows = [
+            ["Fixture De-embedding Model",     fm_label],
+            ["DUT S-parameter Topology",       topo.upper()],
+            ["Reference Impedance Z₀",         f"{z0_val:.1f} Ω"],
+            ["Frequency Range (de-embedded)",  f"{_mhz(fmin_de)} – {_mhz(fmax_de)}"],
+            ["Frequency Points",               str(n_pts)],
+            ["NRMS Error — Raw Measurement",   _pct(nrms_raw)],
+            ["NRMS Error — De-embedded DUT",   _pct(nrms_de)],
+        ]
+        table_viii_de_html = _render_table(
+            caption="Fixture De-Embedding Configuration and Quality Metrics",
+            table_id="VIII",
+            headers=["De-Embedding Parameter", "Value"],
+            rows=de_rows
+        )
+
+        de_content = (
+            "This section presents the fixture de-embedding results. Parasitic contributions "
+            "from the test fixture were removed using the selected fixture model and calibration "
+            "standards (Open / Short). The NRMS metric quantifies the relative change in "
+            "impedance response before and after de-embedding.\n"
+            + table_viii_de_html
+        )
+
+        # De-embedding plots
+        de_plots = deembed_data.get("plots", [])
+        if de_plots:
+            de_plots_html = '<div class="grid-2col">'
+            for p in de_plots:
+                pid   = p.get("id", "")
+                title = p.get("title", pid)
+                img   = p.get("image", "")
+                fig_html = _render_figure(
+                    base64_img=img,
+                    caption=f"De-embedded vs. raw: {title}.",
+                    fig_num=fig_counter
+                )
+                de_plots_html += f"<div>{fig_html}</div>"
+                toc_figures.append((f"Fig. {fig_counter}. De-embedded vs. raw: {title}", f"fig-{fig_counter}"))
+                fig_counter += 1
+            de_plots_html += "</div>"
+            de_content += de_plots_html
+
+        sections_html += _render_section(
+            title="Fixture De-Embedding Results",
+            number="VIII",
+            section_id="sec-viii-de",
+            content=de_content
+        )
+        toc_sections.append(("VIII. Fixture De-Embedding Results", "#sec-viii-de"))
+        toc_tables.append(("Table VIII. De-Embedding Configuration and Quality Metrics", "#table-viii"))
+        table_counter += 1
+
+    # --- Section IX: Datasheet Reference ---
     if datasheet:
         ds_name = datasheet.get("name", "Datasheet URL")
         ds_path = datasheet.get("relative_path", "")
         ds_mtime = datasheet.get("mtime", 0)
         ds_date = datetime.datetime.fromtimestamp(ds_mtime).strftime("%Y-%m-%d %H:%M:%S") if ds_mtime else "N/A"
-        
-        # Keep and format original web datasheet link
+
         ds_web_url = datasheet.get("url") or metadata.get("datasheet_url") or ""
-        
+
         full_pdf_path = os.path.join(BIBLIOTECA_DIR, ds_path.replace('/', os.sep)).replace(os.sep, '/')
         ds_rows = [
             ["Document Label / File", ds_name],
@@ -1191,22 +1521,22 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
             ["Original Datasheet Web Link", f"<a href='{ds_web_url}' target='_blank'>{ds_web_url}</a>" if ds_web_url else "N/A"],
             ["Mouser Supplier Link", f"<a href='{metadata.get('supplier_url') or metadata.get('mouser_product_url')}' target='_blank'>Product Page</a>" if metadata.get('supplier_url') or metadata.get('mouser_product_url') else "N/A"]
         ]
-        table_viii_html = _render_table(
+        table_ix_html = _render_table(
             caption="Attached Component Reference Datasheets and Documents",
-            table_id="VIII",
+            table_id="IX",
             headers=["Linked Reference Field", "Document Link / URL Reference"],
             rows=ds_rows
         )
         sections_html += _render_section(
             title="Technical Datasheets and References",
-            number="VIII",
-            section_id="sec-viii",
-            content="Official manufacturer datasheets and supplier documentation linked to this measurement for verification purposes are indexed below.\n" + table_viii_html
+            number="IX",
+            section_id="sec-ix",
+            content="Official manufacturer datasheets and supplier documentation linked to this measurement for verification purposes are indexed below.\n" + table_ix_html
         )
-        toc_sections.append(("VIII. Technical Datasheets and References", "#sec-viii"))
-        toc_tables.append(("Table VIII. Attached Component Reference Datasheets and Documents", "#table-viii"))
+        toc_sections.append(("IX. Technical Datasheets and References", "#sec-ix"))
+        toc_tables.append(("Table IX. Attached Component Reference Datasheets and Documents", "#table-ix"))
         table_counter += 1
-        
+
     # Build Table of Contents HTML dynamically
     toc_html = """
     <div class="toc-container" id="table-of-contents">
@@ -1221,13 +1551,13 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
             toc_html += f'                    <li class="toc-item toc-subitem"><a href="{anchor}">{title}</a></li>\n'
         else:
             toc_html += f'                    <li class="toc-item"><a href="{anchor}">{title}</a></li>\n'
-            
+
     toc_html += """
                 </ul>
             </div>
             <div class="toc-column">
     """
-    
+
     if toc_tables:
         toc_html += """
                 <div class="toc-column-title" style="margin-top: 0;">2. List of Tables</div>
@@ -1236,7 +1566,7 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         for title, anchor in toc_tables:
             toc_html += f'                    <li class="toc-item" style="font-size: 12.5px;"><a href="{anchor}">{title}</a></li>\n'
         toc_html += "                </ul>\n"
-        
+
     if toc_figures:
         toc_html += """
                 <div class="toc-column-title">3. List of Figures</div>
@@ -1245,13 +1575,13 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         for title, anchor in toc_figures:
             toc_html += f'                    <li class="toc-item" style="font-size: 12.5px;"><a href="#{anchor}">{title}</a></li>\n'
         toc_html += "                </ul>\n"
-        
+
     toc_html += """
             </div>
         </div>
     </div>
     """
-        
+
     # Build complete document
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1269,16 +1599,17 @@ def generate_report_html(entry: dict, touchstone_path: str | None = None) -> str
         {header_html}
         {title_block_html}
         {abstract_html}
+        {scorecard_html}
         {toc_html}
         {sections_html}
-        
+
         <div class="report-footer">
-            <div>RF & Signal Integrity Suite • Automated Characterization System v1.7.0</div>
-            <div style="font-family: monospace; font-size: 10px; margin-top: 5px;">Report compiled dynamically at {current_time_str} • System operator verified.</div>
-            <div style="font-size: 9px; color: #a0aec0; margin-top: 10px; font-style: italic;">Disclaimer: This technical report is automatically compiled by the RF & Signal Integrity Suite. Models and values represent numerical extractions and mathematical models fit against experimental data, and should be verified against application conditions before hardware manufacturing.</div>
+            <div>RF &amp; Signal Integrity Suite &bull; Automated Characterization System v1.7.0</div>
+            <div style="font-family: monospace; font-size: 10px; margin-top: 5px;">Report compiled at {current_time_str} &bull; System operator verified.</div>
+            <div style="font-size: 9px; color: #a0aec0; margin-top: 10px; font-style: italic;">Disclaimer: This report is automatically compiled by the RF &amp; Signal Integrity Suite. Values represent numerical extractions fit against experimental data and should be verified against application conditions before hardware manufacturing.</div>
         </div>
     </div>
 </body>
-</html>
-"""
+</html>"""
+
     return html_content

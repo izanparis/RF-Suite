@@ -12,10 +12,12 @@ import logging
 import tempfile
 import numpy as np
 import skrf as rf
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body
+import json
+import asyncio
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -60,9 +62,21 @@ try:
     from logic.s_params import process_s_params_csv, process_s_params_touchstone
     from logic.vna import run_sweep, get_vna_connection, calibrate_step, finalize_calibration, process_sweep, start_calibration
     from logic.compact_models import extract_compact_model
-    from logic.nominal_extraction import extract_nominal_value, extract_nominal_typical
+    from logic.nominal_extraction import extract_nominal_value, extract_nominal_typical, extract_nominal
     from logic.correction import apply_hp_correction
     from logic.report_template import generate_report_html
+    from logic.deembedding import run_deembedding
+    from logic import database as db
+    from logic.markers import detect_from_network, format_markers_for_display
+    from logic import rfproject
+    from logic.matching_network import solve_l_network
+    from logic.tdr import compute_tdr
+    from logic.comparison import compare_measurements
+    from logic.eda_export import (
+        export_spice_from_netlist, export_kicad_symbol,
+        export_qucs_schematic, export_ads_mdl
+    )
+    from logic.sequencer import run_sequence as seq_run_sequence
 except Exception as e:
     logging.error(f"Error loading logic modules: {e}")
 
@@ -106,6 +120,14 @@ for default_nanovna in ("NanoVNA-Izan", "NanoVNA-LAB1", "NanoVNA-LAB2"):
 # Directorios para E5071C
 os.makedirs(os.path.join(BASE_CAL_DIR, "VNA-E5071C"), exist_ok=True)
 os.makedirs(os.path.join(BASE_MEAS_DIR, "VNA-E5071C"), exist_ok=True)
+
+# --- Base de datos SQLite ---
+DB_PATH = os.path.join(BIBLIOTECA_DIR, "rf_suite.db")
+try:
+    db.init_db(DB_PATH)
+    logging.info(f"Base de datos inicializada: {DB_PATH}")
+except Exception as _db_err:
+    logging.error(f"Error al inicializar la base de datos: {_db_err}")
 
 def get_device_dir(base_dir, device_name):
     # Validar nombre del dispositivo para evitar escape de directorios
@@ -1170,6 +1192,71 @@ class ReportSaveRequest(BaseModel):
     measurement_relative_path: str
     html_content: str
 
+class BatchExtractRequest(BaseModel):
+    paths: List[str]
+    component_type: str = "capacitor"
+    method: str = "nominal"   # "nominal" | "physical" | "vf"
+    topology: str = "shunt"
+
+class DbRegisterMeasurementRequest(BaseModel):
+    filename: str
+    filepath: str
+    component_type: Optional[str] = None
+    device_name: Optional[str] = None
+    vna_device: Optional[str] = None
+    operator: Optional[str] = None
+    nominal_value: Optional[float] = None
+    nominal_unit: Optional[str] = None
+    srf_hz: Optional[float] = None
+    esr: Optional[float] = None
+    q_factor: Optional[float] = None
+    quality: Optional[str] = None
+    nports: Optional[int] = None
+    n_points: Optional[int] = None
+    freq_start_hz: Optional[float] = None
+    freq_stop_hz: Optional[float] = None
+    tags: Optional[List[str]] = None
+    project_id: Optional[int] = None
+
+class DbRegisterCalibrationRequest(BaseModel):
+    name: str
+    kit_name: str = ""
+    cal_type: str = "SOLT"
+    vna_device: str = ""
+    operator: str = ""
+    filepath: str = ""
+    is_active: bool = False
+
+class DbCreateProjectRequest(BaseModel):
+    name: str
+    description: str = ""
+
+class ProjectCreateRequest(BaseModel):
+    name: str
+    description: str = ""
+    save_path: str        # absolute path where the .rfproject will be saved
+
+class ProjectAddFileRequest(BaseModel):
+    project_path: str
+    file_relative_path: str   # relative path in Biblioteca
+    category: str = "measurements"
+    alias: Optional[str] = None
+
+class ProjectAddContentRequest(BaseModel):
+    project_path: str
+    internal_path: str
+    content_b64: str      # base64-encoded content
+    category: str = "notes"
+
+class ProjectRemoveFileRequest(BaseModel):
+    project_path: str
+    internal_path: str
+
+class ProjectUpdateMetaRequest(BaseModel):
+    project_path: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+
 import numpy as np
 
 # --- API Endpoints ---
@@ -1470,6 +1557,68 @@ async def get_all_library():
         "extractions": extractions
     }
 
+@app.get("/api/library/metrics")
+async def get_library_metrics(
+    path: str,                           # relative path dentro de Biblioteca/
+    component_type: str = "capacitor",
+    topology: str = "shunt",
+):
+    """Extrae C/L nominal y SRF de un archivo de la biblioteca on-the-fly."""
+    full_path = os.path.join(BIBLIOTECA_DIR, path.lstrip("/"))
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {path}")
+    try:
+        import skrf as _rf, tempfile as _tmp
+        with open(full_path, "rb") as _fh:
+            raw = _fh.read()
+        ext = ".s2p" if full_path.lower().endswith(".s2p") else ".s1p"
+        with _tmp.NamedTemporaryFile(suffix=ext, delete=False) as _t:
+            _t.write(raw); _tp = _t.name
+        try:
+            ntwk = _rf.Network(_tp)
+        finally:
+            try: os.unlink(_tp)
+            except: pass
+        z0 = 50.0
+        if ntwk.nports >= 2:
+            s21 = ntwk.s[:, 1, 0]
+            if topology == "series":
+                zdut = z0 * 2.0 * (1.0 - s21) / (s21 + 1e-30)
+            else:
+                zdut = z0 * s21 / (2.0 * (1.0 - s21) + 1e-30)
+        else:
+            s11 = ntwk.s[:, 0, 0]
+            zdut = z0 * (1.0 + s11) / (1.0 - s11 + 1e-30)
+        freq = ntwk.f
+        result = extract_nominal(freq, zdut, component_type)
+        val  = result.get("nominal_value", 0.0)
+        unit = result.get("unit", "F")
+        srf  = result.get("srf_hz")
+        qual = result.get("quality", "bad")
+        # Format value
+        if unit == "F":
+            if val >= 1e-6:  disp = f"{val*1e6:.3g} µF"
+            elif val >= 1e-9: disp = f"{val*1e9:.3g} nF"
+            else:             disp = f"{val*1e12:.3g} pF"
+        else:
+            if val >= 1e-3:  disp = f"{val*1e3:.3g} mH"
+            elif val >= 1e-6: disp = f"{val*1e6:.3g} µH"
+            else:             disp = f"{val*1e9:.3g} nH"
+        srf_disp = None
+        if srf:
+            if srf >= 1e9: srf_disp = f"{srf/1e9:.3g} GHz"
+            elif srf >= 1e6: srf_disp = f"{srf/1e6:.3g} MHz"
+            else: srf_disp = f"{srf/1e3:.3g} kHz"
+        return {
+            "value": disp if val > 0 else "—",
+            "srf": srf_disp or "—",
+            "quality": qual,
+            "raw_value": val,
+            "raw_srf_hz": srf,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/library/index/rebuild")
 async def rebuild_library_index():
     try:
@@ -1482,6 +1631,138 @@ async def rebuild_library_index():
     except Exception as e:
         logging.error(f"Library index rebuild failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/batch/extract")
+async def batch_extract(req: BatchExtractRequest):
+    """Procesa múltiples archivos S2P en lote. Devuelve SSE con progreso."""
+    def _process_one(rel_path: str, idx: int, total: int):
+        full_path = os.path.join(BIBLIOTECA_DIR, rel_path.lstrip("/\\"))
+        file_name = os.path.basename(full_path)
+        try:
+            if not os.path.exists(full_path):
+                raise FileNotFoundError(f"Archivo no encontrado: {rel_path}")
+            with open(full_path, "rb") as fh:
+                content = fh.read()
+            ext = ".s2p" if full_path.lower().endswith(".s2p") else ".s1p"
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as t:
+                t.write(content); tp = t.name
+            try:
+                ntwk = rf.Network(tp)
+            finally:
+                try: os.unlink(tp)
+                except: pass
+            z0 = 50.0
+            if ntwk.nports >= 2:
+                s21 = ntwk.s[:, 1, 0]
+                zdut = z0 * s21 / (2.0 * (1.0 - s21) + 1e-30) if req.topology != "series" else z0 * 2.0 * (1.0 - s21) / (s21 + 1e-30)
+            else:
+                s11 = ntwk.s[:, 0, 0]
+                zdut = z0 * (1.0 + s11) / (1.0 - s11 + 1e-30)
+            freq = ntwk.f
+            if req.method == "nominal":
+                r = extract_nominal(freq, zdut, req.component_type)
+                val = r.get("nominal_value", 0.0)
+                unit = r.get("unit", "F")
+                srf = r.get("srf_hz")
+                if unit == "F":
+                    disp = f"{val*1e9:.3g} nF" if val >= 1e-9 else f"{val*1e12:.3g} pF" if val >= 1e-12 else f"{val*1e6:.3g} µF"
+                else:
+                    disp = f"{val*1e9:.3g} nH" if val >= 1e-9 else f"{val*1e6:.3g} µH" if val >= 1e-6 else f"{val*1e3:.3g} mH"
+                return {"type": "result", "idx": idx, "total": total, "file": file_name, "path": rel_path,
+                        "value_disp": disp, "nominal_value": val, "unit": unit,
+                        "srf_hz": srf, "esr": r.get("esr"), "q_factor": r.get("q_factor"),
+                        "quality": r.get("quality", "bad"), "quality_score": r.get("quality_score", 0.0)}
+            else:
+                r = extract_compact_model(content, file_name, method=req.method, z0=z0,
+                                          component_type=req.component_type, topology=req.topology)
+                summ = r.get("summary", {})
+                nrms = summ.get("nrms", 1.0)
+                val = summ.get("c_eff") or summ.get("l_eff", 0.0)
+                unit = "F" if req.component_type == "capacitor" else "H"
+                if unit == "F":
+                    disp = f"{val*1e9:.3g} nF" if val >= 1e-9 else f"{val*1e12:.3g} pF" if val >= 1e-12 else f"{val*1e6:.3g} µF"
+                else:
+                    disp = f"{val*1e9:.3g} nH" if val >= 1e-9 else f"{val*1e6:.3g} µH" if val >= 1e-6 else f"{val*1e3:.3g} mH"
+                quality = "good" if nrms < 0.10 else "fair" if nrms < 0.30 else "poor"
+                return {"type": "result", "idx": idx, "total": total, "file": file_name, "path": rel_path,
+                        "value_disp": disp, "nominal_value": val, "unit": unit,
+                        "nrms": nrms, "quality": quality, "quality_score": max(0.0, 1.0 - nrms)}
+        except Exception as exc:
+            return {"type": "error", "idx": idx, "total": total, "file": file_name, "path": rel_path, "message": str(exc)}
+
+    async def _stream():
+        total = len(req.paths)
+        loop = asyncio.get_event_loop()
+        for idx, rel_path in enumerate(req.paths):
+            event = await loop.run_in_executor(None, _process_one, rel_path, idx, total)
+            yield f"data: {json.dumps(event)}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'total': total})}\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+@app.websocket("/api/vna/sweep/live")
+async def vna_live_sweep(websocket: WebSocket):
+    """WebSocket para barrido continuo en tiempo real. El cliente envía config JSON y recibe
+    trazas S11/S21 después de cada barrido hasta recibir {"type":"stop"}."""
+    await websocket.accept()
+    vna = None
+    try:
+        config = await asyncio.wait_for(websocket.receive_json(), timeout=10.0)
+        start_hz   = float(config.get("start_hz", 1e6))
+        stop_hz    = float(config.get("stop_hz", 1e9))
+        points     = int(config.get("points", 101))
+        device_type = config.get("device", "NanoVNA")
+
+        loop = asyncio.get_event_loop()
+        vna = await loop.run_in_executor(None, lambda: get_vna_connection(device_type=device_type))
+        await loop.run_in_executor(None, lambda: vna.set_sweep(start_hz, stop_hz, points))
+
+        sweep_count = 0
+        while True:
+            # Check for stop command (non-blocking)
+            try:
+                msg = await asyncio.wait_for(websocket.receive_json(), timeout=0.05)
+                if msg.get("type") == "stop":
+                    break
+            except asyncio.TimeoutError:
+                pass
+
+            def _do_sweep():
+                import numpy as _np
+                stream = vna.stream()
+                s11_raw, s21_raw, freqs_raw = next(stream)
+                freqs = _np.asarray(freqs_raw)
+                s11   = _np.asarray(s11_raw)
+                s21   = _np.asarray(s21_raw) if s21_raw is not None else None
+                s11_db = (20 * _np.log10(_np.maximum(_np.abs(s11), 1e-12))).tolist()
+                s21_db = (20 * _np.log10(_np.maximum(_np.abs(s21), 1e-12))).tolist() if s21 is not None else None
+                s11_ph = (_np.angle(s11, deg=True)).tolist()
+                s21_ph = (_np.angle(s21, deg=True)).tolist() if s21 is not None else None
+                return (freqs / 1e6).tolist(), s11_db, s21_db, s11_ph, s21_ph
+
+            try:
+                freqs_mhz, s11_db, s21_db, s11_ph, s21_ph = await loop.run_in_executor(None, _do_sweep)
+                await websocket.send_json({
+                    "type": "sweep",
+                    "sweep_count": sweep_count,
+                    "freqs_mhz": freqs_mhz,
+                    "s11_db": s11_db,
+                    "s21_db": s21_db,
+                    "s11_phase": s11_ph,
+                    "s21_phase": s21_ph,
+                })
+                sweep_count += 1
+            except Exception as sweep_err:
+                await websocket.send_json({"type": "error", "message": str(sweep_err)})
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
 
 @app.get("/api/datasheets/search")
 async def search_datasheets(query: str, supplier: str = "mouser", limit: int = 10):
@@ -1732,10 +2013,12 @@ async def api_reports_open(req: MeasurementMetadataActionRequest):
 @app.post("/api/compact-models/extract")
 async def api_extract_compact_model(
     filename: Optional[str] = Form(None),
-    method: str = Form("shunt"),
+    method: str = Form("physical"),
     z0: float = Form(50.0),
     device: Optional[str] = Form(None),
     custom_name: Optional[str] = Form(None),
+    component_type: str = Form("capacitor"),
+    topology: str = Form("shunt"),
     file: Optional[UploadFile] = File(None)
 ):
     content = None
@@ -1771,7 +2054,7 @@ async def api_extract_compact_model(
         raise HTTPException(status_code=400, detail="No se ha proporcionado ninguna medición válida")
 
     try:
-        result = extract_compact_model(content, actual_filename, method, z0)
+        result = extract_compact_model(content, actual_filename, method, z0, component_type, topology)
         
         # Guardar en la carpeta del servidor
         save_name = custom_name if custom_name else (actual_filename.split('.')[0] if actual_filename else "modelo_extraido")
@@ -1787,6 +2070,33 @@ async def api_extract_compact_model(
     except Exception as e:
         logging.error(f"Compact model extraction failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/compact-models/open-in-ltspice")
+async def open_in_ltspice(
+    netlist: str = Form(...),
+    filename: str = Form("modelo.cir"),
+):
+    """Escribe el netlist SPICE en un fichero temporal y abre LTspice con él."""
+    import subprocess, tempfile as _tmpfile
+    LTSPICE_CANDIDATES = [
+        r"C:\Program Files\LTC\LTspice XVII\XVIIx64.exe",
+        r"C:\Program Files\LTC\LTspiceXVII\XVIIx64.exe",
+        r"C:\Program Files\ADI\LTspice\LTspice.exe",
+        r"C:\Program Files (x86)\LTC\LTspiceXVII\XVIIx64.exe",
+    ]
+    ltspice_exe = next((p for p in LTSPICE_CANDIDATES if os.path.exists(p)), None)
+    if ltspice_exe is None:
+        raise HTTPException(status_code=404, detail="LTspice no encontrado en rutas estándar. Instálalo o ajusta la ruta en main.py.")
+    # Guardar en COMPACT_MODELS_DIR con el nombre pedido
+    safe_name = filename if filename.endswith(".cir") else filename + ".cir"
+    save_path = os.path.join(COMPACT_MODELS_DIR, safe_name)
+    with open(save_path, "w", encoding="utf-8") as fh:
+        fh.write(netlist)
+    try:
+        subprocess.Popen([ltspice_exe, save_path])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo lanzar LTspice: {e}")
+    return {"ok": True, "path": save_path}
 
 @app.post("/api/vna/measurements/cutoff-freq")
 async def calculate_cutoff_freq(file: UploadFile = File(...), search_type: str = Form("min")):
@@ -1904,6 +2214,93 @@ async def vna_hp_correct_offline(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/deembedding/process")
+async def deembedding_process(
+    # Archivos subidos directamente (opcionales si se dan rutas de biblioteca)
+    dut_file:   Optional[UploadFile] = File(None),
+    open_file:  Optional[UploadFile] = File(None),
+    short_file: Optional[UploadFile] = File(None),
+    # Rutas relativas a BIBLIOTECA_DIR (alternativa a subir el fichero)
+    dut_path:   str   = Form(""),
+    open_path:  str   = Form(""),
+    short_path: str   = Form(""),
+    # Parámetros de proceso
+    topology:      str   = Form("shunt"),
+    fixture_model: str   = Form("pi"),
+    z0:            float = Form(50.0),
+    save_name:     str   = Form(""),
+    device:        str   = Form("NanoVNA-Izan"),
+    component_type: str  = Form("capacitor"),
+):
+    """
+    De-embedding Open-Short. Cada fichero puede venir como upload binario
+    o como ruta relativa dentro de BIBLIOTECA_DIR.
+
+    Devuelve:
+        touchstone_content : str   — .s2p limpio
+        summary            : dict  — n_points, fmin/fmax_mhz, srf_mhz, c_est_nf
+        plots              : list  — [{id, title, image(base64)}]
+        saved_path         : str   — ruta donde se guardó en la Biblioteca
+    """
+    # Qué estándares necesita cada modelo de fixture
+    _needs_open  = fixture_model in ("pi", "t", "shunt_only")
+    _needs_short = fixture_model in ("pi", "t", "series_only")
+
+    async def resolve(upload: Optional[UploadFile], lib_path: str, role: str, required: bool):
+        """Devuelve (bytes|None, hint_filename). Prioridad: upload > lib_path."""
+        if upload and upload.filename:
+            return await upload.read(), upload.filename
+        if lib_path:
+            full = os.path.join(BIBLIOTECA_DIR, lib_path.lstrip("/"))
+            if not os.path.exists(full):
+                raise HTTPException(status_code=400,
+                    detail=f"Archivo {role} no encontrado en la biblioteca: {lib_path}")
+            with open(full, "rb") as f:
+                return f.read(), os.path.basename(full)
+        if required:
+            raise HTTPException(status_code=400,
+                detail=f"El modelo '{fixture_model}' requiere el archivo {role}.")
+        return None, f"{role.lower()}.s2p"
+
+    try:
+        dut_bytes,   dut_hint   = await resolve(dut_file,   dut_path,   "DUT",   True)
+        open_bytes,  open_hint  = await resolve(open_file,  open_path,  "OPEN",  _needs_open)
+        short_bytes, short_hint = await resolve(short_file, short_path, "SHORT", _needs_short)
+
+        result = run_deembedding(
+            dut_bytes, open_bytes, short_bytes,
+            z0=z0, topology=topology, fixture_model=fixture_model,
+            dut_hint=dut_hint, open_hint=open_hint, short_hint=short_hint,
+        )
+
+        # Guardar .s2p en la Biblioteca
+        base_name = save_name.strip() if save_name.strip() else (
+            os.path.splitext(dut_hint or "deembedded")[0] + "_deembedded"
+        )
+        if not base_name.endswith(".s2p"):
+            base_name += ".s2p"
+
+        save_dir  = get_measurement_dir(device, component_type)
+        save_path = os.path.join(save_dir, base_name)
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(result["touchstone_content"])
+
+        upsert_measurement_index(save_path, device, component_type, extra={
+            "source": "deembedding",
+            "saved_at": __import__("time").time(),
+        })
+
+        result["saved_path"] = save_path
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"De-embedding failed: {e}")
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/vna/connect")
 async def vna_connect(device: str = "NanoVNA-Izan", ip: Optional[str] = None):
     global e5071c_ip
@@ -1939,6 +2336,15 @@ async def save_measurement(req: SaveMeasurementRequest, device: Optional[str] = 
             "source": "manual_save",
             "saved_at": time.time(),
         })
+        try:
+            db.register_measurement(
+                filename=filename,
+                filepath=target_path,
+                component_type=normalize_component_type(req.component_type),
+                device_name=device,
+            )
+        except Exception as _dbe:
+            logging.warning(f"DB registration failed for {filename}: {_dbe}")
         return {"status": "success", "message": f"Medición guardada en {device}/{filename}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -2103,6 +2509,7 @@ async def vna_measurement(
     port1: int = Form(1),
     port2: int = Form(2)
 ):
+    from logic.vna import generate_ieee_measurement_plot
     temp_cal_path = None
     should_cleanup = False
     try:
@@ -2192,12 +2599,15 @@ async def vna_measurement(
                 plot_base64 = base64.b64encode(buf.read()).decode('utf-8')
                 plt.close()
                 
+                plot_svg_base64 = generate_ieee_measurement_plot(freqs, s11, s21=None, port1=port1, port2=port1, is_one_port=True)
+                
                 result = {
                     "status": "success",
                     "freqs": freqs.tolist(),
                     "s11_real": np.real(s11).tolist(),
                     "s11_imag": np.imag(s11).tolist(),
                     "plot": plot_base64,
+                    "plot_svg": plot_svg_base64,
                     "touchstone_content": touchstone_content,
                     "port1": port1,
                     "port2": port1
@@ -2240,6 +2650,8 @@ async def vna_measurement(
                 plot_base64 = base64.b64encode(buf.read()).decode('utf-8')
                 plt.close()
                 
+                plot_svg_base64 = generate_ieee_measurement_plot(freqs, s11, s21=s21, port1=port1, port2=port2, is_one_port=False)
+                
                 result = {
                     "status": "success",
                     "freqs": freqs.tolist(),
@@ -2248,6 +2660,7 @@ async def vna_measurement(
                     "s21_real": np.real(s21).tolist(),
                     "s21_imag": np.imag(s21).tolist(),
                     "plot": plot_base64,
+                    "plot_svg": plot_svg_base64,
                     "touchstone_content": touchstone_content,
                     "port1": port1,
                     "port2": port2
@@ -2299,6 +2712,19 @@ async def vna_measurement(
             result["saved_filename"] = filename
             result["component_type"] = normalize_component_type(component_type)
             result["library_metadata"] = index_entry
+            try:
+                db.register_measurement(
+                    filename=filename,
+                    filepath=target_path,
+                    component_type=normalize_component_type(component_type),
+                    device_name=device,
+                    nports=1 if is_one_port else 2,
+                    n_points=points,
+                    freq_start_hz=start_mhz * 1e6,
+                    freq_stop_hz=stop_mhz * 1e6,
+                )
+            except Exception as _dbe:
+                logging.warning(f"DB registration failed for {filename}: {_dbe}")
             
         return result
             
@@ -2494,7 +2920,7 @@ async def quick_extract_component(
                     zdut = (2.0 * z0) * (1.0 - s21) / (s21 + 1e-30)
 
             magz = np.abs(zdut)
-            extraction = extract_nominal_typical(freqs, zdut, component_type)
+            extraction = extract_nominal(freqs, zdut, component_type)
             results = {
                 "freq_hz": freqs.tolist(),
                 "mag_z": magz.tolist(),
@@ -2520,6 +2946,549 @@ async def open_external_url(url: str):
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ===========================================================================
+# Database endpoints
+# ===========================================================================
+
+@app.get("/api/db/stats")
+async def db_stats():
+    """Estadísticas globales de la base de datos (total medidas, hoy, proyectos, breakdown calidad)."""
+    try:
+        return db.get_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/db/measurements/recent")
+async def db_recent(n: int = 10):
+    """Últimas N mediciones registradas."""
+    try:
+        return db.get_recent_measurements(n=min(n, 100))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/db/measurements")
+async def db_list_measurements(
+    query: str = "",
+    component_type: str = "",
+    quality: str = "",
+    limit: int = 50,
+    offset: int = 0,
+):
+    try:
+        return db.search_measurements(
+            query=query,
+            component_type=component_type or None,
+            quality=quality or None,
+            limit=min(limit, 200),
+            offset=offset,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/db/measurements")
+async def db_register_measurement(req: DbRegisterMeasurementRequest):
+    try:
+        mid = db.register_measurement(**req.dict())
+        return {"status": "ok", "id": mid}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/db/measurements/{measurement_id}")
+async def db_delete_measurement(measurement_id: int):
+    try:
+        ok = db.delete_measurement(measurement_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Medición no encontrada")
+        return {"status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/db/projects")
+async def db_list_projects():
+    try:
+        return db.list_projects()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/db/projects")
+async def db_create_project(req: DbCreateProjectRequest):
+    try:
+        return db.create_project(req.name, req.description)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/db/calibrations")
+async def db_register_calibration(req: DbRegisterCalibrationRequest):
+    try:
+        cid = db.register_calibration(**req.dict())
+        return {"status": "ok", "id": cid}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/db/calibrations/active")
+async def db_active_calibration():
+    try:
+        return db.get_active_calibration() or {}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===========================================================================
+# RF Markers endpoint
+# ===========================================================================
+
+@app.post("/api/markers/detect")
+async def markers_detect(
+    file:           UploadFile  = File(...),
+    component_type: str         = Form(""),
+    topology:       str         = Form("shunt"),
+    mask_json:      str         = Form("{}"),
+):
+    """
+    Auto-detecta marcadores RF en un archivo Touchstone.
+    Devuelve markers, pass_fail y lista formateada para la UI.
+    """
+    try:
+        content = await file.read()
+        ext = ".s2p" if file.filename.lower().endswith(".s2p") else ".s1p"
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as t:
+            t.write(content)
+            tp = t.name
+        try:
+            import skrf as _rf
+            ntwk = _rf.Network(tp)
+        finally:
+            try: os.unlink(tp)
+            except: pass
+
+        import json as _json
+        mask = _json.loads(mask_json) if mask_json.strip() else {}
+        result = detect_from_network(
+            ntwk,
+            component_type=component_type or None,
+            topology=topology,
+            mask=mask or None,
+        )
+        result["display"] = format_markers_for_display(result["markers"])
+        return result
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/markers/detect-path")
+async def markers_detect_path(
+    path:           str = Body(..., embed=True),
+    component_type: str = Body("",  embed=True),
+    topology:       str = Body("shunt", embed=True),
+    mask:           dict = Body({}, embed=True),
+):
+    """Detecta marcadores en un archivo de la Biblioteca por ruta relativa."""
+    try:
+        full_path = os.path.join(BIBLIOTECA_DIR, path.lstrip("/\\"))
+        if not os.path.exists(full_path):
+            raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {path}")
+        import skrf as _rf
+        ext = ".s2p" if full_path.lower().endswith(".s2p") else ".s1p"
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as t:
+            with open(full_path, "rb") as fh:
+                t.write(fh.read())
+            tp = t.name
+        try:
+            ntwk = _rf.Network(tp)
+        finally:
+            try: os.unlink(tp)
+            except: pass
+
+        result = detect_from_network(
+            ntwk,
+            component_type=component_type or None,
+            topology=topology,
+            mask=mask or None,
+        )
+        result["display"] = format_markers_for_display(result["markers"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===========================================================================
+# Smith Chart data endpoint
+# ===========================================================================
+
+@app.get("/api/smith/data")
+async def smith_data(
+    path:     str,
+    topology: str   = "shunt",
+    z0:       float = 50.0,
+):
+    """
+    Devuelve Γ y Z complejos a partir de un archivo Touchstone de la Biblioteca.
+    topology: "shunt" | "series" | "oneport"
+    Retorna: {freq, gamma_re, gamma_im, z_re, z_im, s11_db, meta}
+    """
+    full_path = os.path.join(BIBLIOTECA_DIR, path.lstrip("/\\"))
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {path}")
+    try:
+        ext = ".s2p" if full_path.lower().endswith(".s2p") else ".s1p"
+        with open(full_path, "rb") as fh:
+            raw = fh.read()
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as t:
+            t.write(raw); tp = t.name
+        try:
+            ntwk = rf.Network(tp)
+        finally:
+            try: os.unlink(tp)
+            except: pass
+
+        freq   = ntwk.f
+        nports = ntwk.nports
+        s11    = ntwk.s[:, 0, 0]
+
+        if nports >= 2:
+            s21 = ntwk.s[:, 1, 0]
+            if topology == "series":
+                z_dut = z0 * 2.0 * (1.0 - s21) / (s21 + 1e-30)
+            else:
+                z_dut = z0 * s21 / (2.0 * (1.0 - s21) + 1e-30)
+            gamma = (z_dut - z0) / (z_dut + z0)
+        else:
+            gamma = s11
+            z_dut = z0 * (1.0 + s11) / (1.0 - s11 + 1e-30)
+
+        s11_db = 20.0 * np.log10(np.abs(s11) + 1e-30)
+
+        return {
+            "freq":     freq.tolist(),
+            "gamma_re": np.real(gamma).tolist(),
+            "gamma_im": np.imag(gamma).tolist(),
+            "z_re":     np.real(z_dut).tolist(),
+            "z_im":     np.imag(z_dut).tolist(),
+            "s11_db":   s11_db.tolist(),
+            "meta": {
+                "filename": os.path.basename(full_path),
+                "nports":   int(nports),
+                "f_start":  float(freq[0]),
+                "f_stop":   float(freq[-1]),
+                "n_points": int(len(freq)),
+            },
+        }
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===========================================================================
+# .rfproject endpoints
+# ===========================================================================
+
+PROJECTS_DIR = os.path.join(BIBLIOTECA_DIR, "Proyectos")
+os.makedirs(PROJECTS_DIR, exist_ok=True)
+
+@app.post("/api/project/create")
+async def project_create(req: ProjectCreateRequest):
+    try:
+        save_path = req.save_path if req.save_path else os.path.join(PROJECTS_DIR, req.name)
+        path = rfproject.create_project(save_path, req.name, req.description)
+        # Register in DB
+        try:
+            db.create_project(req.name, req.description)
+        except Exception: pass
+        return {"status": "ok", "path": path, "info": rfproject.get_project_info(path)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/project/info")
+async def project_info(path: str):
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+    try:
+        return rfproject.get_project_info(path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/project/add-file")
+async def project_add_file(req: ProjectAddFileRequest):
+    if not os.path.exists(req.project_path):
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+    full_src = os.path.join(BIBLIOTECA_DIR, req.file_relative_path.lstrip("/\\"))
+    if not os.path.exists(full_src):
+        raise HTTPException(status_code=404, detail=f"Archivo fuente no encontrado: {req.file_relative_path}")
+    try:
+        internal = rfproject.add_file(req.project_path, full_src, req.category, req.alias)
+        return {"status": "ok", "internal_path": internal}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/project/remove-file")
+async def project_remove_file(req: ProjectRemoveFileRequest):
+    if not os.path.exists(req.project_path):
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+    try:
+        ok = rfproject.remove_file(req.project_path, req.internal_path)
+        return {"status": "ok", "removed": ok}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/project/list")
+async def project_list():
+    """List all .rfproject files in the Proyectos directory."""
+    try:
+        projects = []
+        for fname in os.listdir(PROJECTS_DIR):
+            if fname.endswith(".rfproject"):
+                fpath = os.path.join(PROJECTS_DIR, fname)
+                try:
+                    info = rfproject.get_project_info(fpath)
+                    info["_path"] = fpath
+                    projects.append(info)
+                except Exception:
+                    projects.append({"_path": fpath, "name": fname, "_error": True})
+        projects.sort(key=lambda p: p.get("updated_at", ""), reverse=True)
+        return projects
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/project/download")
+async def project_download(path: str):
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+    filename = os.path.basename(path)
+    return FileResponse(path, media_type="application/zip", filename=filename)
+
+@app.post("/api/project/update-meta")
+async def project_update_meta(req: ProjectUpdateMetaRequest):
+    if not os.path.exists(req.project_path):
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+    try:
+        rfproject.update_metadata(req.project_path, req.name, req.description)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/project/extract-file")
+async def project_extract_file(
+    project_path:  str = Body(..., embed=True),
+    internal_path: str = Body(..., embed=True),
+):
+    """Extract a file from a project to a temp location and return it."""
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = rfproject.extract_file(project_path, internal_path, tmpdir)
+            with open(out, "rb") as fh:
+                data = fh.read()
+        import base64
+        return {
+            "filename": os.path.basename(internal_path),
+            "content_b64": base64.b64encode(data).decode(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ---------------------------------------------------------------------------
+# Matching Network Solver
+# ---------------------------------------------------------------------------
+
+class MatchingSolveRequest(BaseModel):
+    rl: float
+    xl: float = 0.0
+    z0: float = 50.0
+    freq_hz: float = 1e9
+    eseries: str = "E24"
+
+@app.post("/api/matching/solve")
+async def matching_solve(req: MatchingSolveRequest):
+    """Solve L-network matching from complex ZL = RL+jXL to Z0 at a given frequency."""
+    try:
+        solutions = solve_l_network(
+            RL=req.rl, XL=req.xl, Z0=req.z0, f=req.freq_hz, eseries=req.eseries
+        )
+        return {"solutions": solutions, "count": len(solutions)}
+    except Exception as e:
+        logging.error(f"Matching solve error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# TDR — Time Domain Reflectometry
+# ---------------------------------------------------------------------------
+
+@app.post("/api/tdr/compute")
+async def tdr_compute(
+    file:            UploadFile = File(...),
+    window:          str   = Form("kaiser6"),
+    vf:              float = Form(0.66),
+    z0:              float = Form(50.0),
+    zero_pad_factor: int   = Form(4),
+):
+    """Compute TDR trace from uploaded S-parameter file (s1p or s2p)."""
+    content = await file.read()
+    try:
+        result = compute_tdr(
+            content=content,
+            filename=file.filename or "upload.s2p",
+            window=window,
+            vf=vf,
+            z0=z0,
+            zero_pad_factor=zero_pad_factor,
+        )
+        return result
+    except Exception as e:
+        logging.error(f"TDR compute error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/tdr/compute-path")
+async def tdr_compute_path(
+    path:            str   = Body(..., embed=True),
+    window:          str   = Body("kaiser6"),
+    vf:              float = Body(0.66),
+    z0:              float = Body(50.0),
+    zero_pad_factor: int   = Body(4),
+):
+    """Compute TDR from a library measurement path."""
+    try:
+        full_path = safe_library_path(path)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta de biblioteca inválida")
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    with open(full_path, "rb") as fh:
+        content = fh.read()
+    try:
+        result = compute_tdr(
+            content=content,
+            filename=os.path.basename(full_path),
+            window=window,
+            vf=vf,
+            z0=z0,
+            zero_pad_factor=zero_pad_factor,
+        )
+        return result
+    except Exception as e:
+        logging.error(f"TDR compute-path error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Comparison Tool
+# ---------------------------------------------------------------------------
+
+class CompareRequest(BaseModel):
+    paths:  List[str]
+    param:  str = "S11"
+    metric: str = "db"
+    n_grid: int = 1000
+
+@app.post("/api/compare/compute")
+async def compare_compute(req: CompareRequest):
+    """Compare multiple S-parameter files."""
+    abs_paths = []
+    for p in req.paths:
+        try:
+            abs_paths.append(safe_library_path(p))
+        except Exception:
+            pass
+    if not abs_paths:
+        raise HTTPException(status_code=400, detail="No se pudieron resolver las rutas")
+    try:
+        result = compare_measurements(
+            paths=abs_paths,
+            param=req.param,
+            metric=req.metric,
+            n_grid=req.n_grid,
+        )
+        return result
+    except Exception as e:
+        logging.error(f"Compare error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# EDA Export
+# ---------------------------------------------------------------------------
+
+class EdaExportRequest(BaseModel):
+    format:       str         # 'spice' | 'kicad' | 'qucs' | 'ads'
+    spice_netlist: Optional[str] = None
+    components:   Optional[List[Dict[str, Any]]] = None
+    name:         str = "RF_MODEL"
+    topology:     str = "shunt"
+    freq_hz:      float = 1e9
+
+@app.post("/api/eda/export")
+async def eda_export(req: EdaExportRequest):
+    """Export compact model to EDA format."""
+    fmt = req.format.lower()
+    try:
+        if fmt == "spice":
+            if req.spice_netlist:
+                content = export_spice_from_netlist(req.spice_netlist)
+                ext = "cir"
+            elif req.components:
+                from logic.eda_export import export_spice
+                content = export_spice(req.components, req.name, req.topology)
+                ext = "cir"
+            else:
+                raise HTTPException(status_code=400, detail="Se necesita spice_netlist o components")
+        elif fmt == "kicad":
+            comps = req.components or []
+            content = export_kicad_symbol(comps, req.name)
+            ext = "kicad_sym"
+        elif fmt == "qucs":
+            comps = req.components or []
+            content = export_qucs_schematic(comps, req.name, req.freq_hz)
+            ext = "sch"
+        elif fmt == "ads":
+            comps = req.components or []
+            content = export_ads_mdl(comps, req.name)
+            ext = "mdl"
+        else:
+            raise HTTPException(status_code=400, detail=f"Formato desconocido: {fmt}")
+        return {
+            "content":   content,
+            "filename":  f"{req.name}.{ext}",
+            "format":    fmt,
+            "extension": ext,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"EDA export error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Test Sequencer (SSE)
+# ---------------------------------------------------------------------------
+
+class SequencerRunRequest(BaseModel):
+    steps: List[Dict[str, Any]]
+
+@app.post("/api/sequencer/run")
+async def sequencer_run(req: SequencerRunRequest):
+    """Execute an RF test sequence and stream SSE events."""
+    from fastapi.responses import StreamingResponse
+
+    def generate():
+        try:
+            for event in seq_run_sequence(
+                steps=req.steps,
+                biblioteca_dir=BIBLIOTECA_DIR,
+                db_path=DB_PATH,
+            ):
+                yield event
+        except Exception as e:
+            import json as _json
+            yield f"data: {_json.dumps({'event': 'abort', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
 
 # --- Serving Frontend ---
 if getattr(sys, 'frozen', False):

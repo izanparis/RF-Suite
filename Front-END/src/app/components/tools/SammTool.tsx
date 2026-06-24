@@ -1,4 +1,5 @@
-import React, { useMemo, useState, useEffect } from 'react';
+﻿import React, { useMemo, useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { ToolShell } from '../ToolShell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card';
 import { Button } from '../ui/button';
@@ -113,7 +114,7 @@ export function SammTool() {
         }
       } catch (error) {
         console.error(error);
-        alert(t('samm.alert.error_calc') + (error instanceof Error ? error.message : String(error)));
+        toast.error(t('samm.alert.error_calc') + (error instanceof Error ? error.message : String(error)));
       } finally {
         setLoading(false);
       }
@@ -121,15 +122,15 @@ export function SammTool() {
 
     if (id === 'export') {
       if (!result || !result.report_content) {
-        alert(t('samm.alert.no_calc'));
+        toast.info(t('samm.alert.no_calc'));
         return;
       }
       try {
         const { saveTextFile } = await import('../../lib/fsAccess');
         await saveTextFile(null, 'samm_report.csv', result.report_content);
-        alert(t('samm.alert.exported'));
+        toast.info(t('samm.alert.exported'));
       } catch (e) {
-        alert(t('samm.alert.error_export') + e);
+        toast.error(t('samm.alert.error_export') + e);
       }
     }
   };
@@ -390,3 +391,5 @@ export function SammTool() {
     </ToolShell>
   );
 }
+
+

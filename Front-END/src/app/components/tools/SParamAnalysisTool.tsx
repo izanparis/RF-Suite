@@ -1,4 +1,5 @@
-import React, { useState, useRef, useMemo, useEffect } from 'react';
+﻿import React, { useState, useRef, useMemo, useEffect } from 'react';
+import { toast } from 'sonner';
 import { ToolShell } from '../ToolShell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card';
 import { Label } from '../ui/label';
@@ -7,7 +8,7 @@ import { Button } from '../ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { OutputPickerPro } from '../OutputPickerPro';
 import { cn } from '../ui/utils';
-import { Upload, FileCheck, ChevronLeft, ChevronRight, Download, Activity, BarChart3, LineChart as ChartIcon, X, Trash2, GripHorizontal, Library, RefreshCw } from 'lucide-react';
+import { Upload, FileCheck, ChevronLeft, ChevronRight, Download, Activity, BarChart3, LineChart as ChartIcon, X, Trash2, GripHorizontal, Library, RefreshCw, Loader2, Tag, CheckCircle2, XCircle } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   Legend, ResponsiveContainer, Brush, ReferenceLine, ReferenceDot 
@@ -32,6 +33,9 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
   const [loading, setLoading] = useState(false);
   const [activePlotIdx, setActivePlotIdx] = useState(0);
   const [markers, setMarkers] = useState<any[]>([]);
+  const [rfMarkers, setRfMarkers] = useState<{ markers: Record<string, any>; display: any[]; summary: string } | null>(null);
+  const [rfMarkersLoading, setRfMarkersLoading] = useState(false);
+  const [currentRelPath, setCurrentRelPath] = useState<string | null>(null);
 
   interface ComparisonTrace {
     id: string;
@@ -183,6 +187,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
       // Auto-save analysis results to server
       const matched = measurements.find(m => m.name === val) as any;
       const relativePath = matched?.relative_path || val;
+      setCurrentRelPath(relativePath);
       fetch('http://localhost:8080/api/library/measurement/analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -195,9 +200,18 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
           }
         })
       }).catch(err => console.error("Error auto-saving S-params analysis:", err));
+
+      // Auto-detect RF markers
+      setRfMarkersLoading(true);
+      setRfMarkers(null);
+      fetch('http://localhost:8080/api/markers/detect-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: relativePath, component_type: targetComponent || '', topology: 'shunt' })
+      }).then(r => r.json()).then(d => setRfMarkers(d)).catch(() => {}).finally(() => setRfMarkersLoading(false));
     } catch (error) {
       console.error(error);
-      alert('Error: ' + (error instanceof Error ? error.message : String(error)));
+      toast.error('Error: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
       setLoading(false);
     }
@@ -343,14 +357,14 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
       setS2pFile(file);
       setSelectedMeasName("");
     } else {
-      alert(t('sparam.alert.file_type'));
+      toast.info(t('sparam.alert.file_type'));
     }
   };
 
   const handleAction = async (id: string) => {
     if (id === 'analyze') {
       if (!s2pFile) {
-        alert(t('sparam.alert.no_file'));
+        toast.info(t('sparam.alert.no_file'));
         return;
       }
 
@@ -375,7 +389,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
         addTrace(s2pFile.name, data);
       } catch (error) {
         console.error(error);
-        alert(t('sparam.alert.error_analyze') + (error instanceof Error ? error.message : String(error)));
+        toast.error(t('sparam.alert.error_analyze') + (error instanceof Error ? error.message : String(error)));
       } finally {
         setLoading(false);
       }
@@ -383,7 +397,7 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
 
     if (id === 'report') {
       if (!result || !result.zip_content) {
-        alert(t('sparam.alert.no_data'));
+        toast.info(t('sparam.alert.no_data'));
         return;
       }
       try {
@@ -394,9 +408,9 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
         }
 
         await saveBase64File(outDir, filename, result.zip_content);
-        alert(t('sparam.alert.export_success'));
+        toast.success(t('sparam.alert.export_success'));
       } catch (e) {
-        alert(t('sparam.alert.export_error') + e);
+        toast.error(t('sparam.alert.export_error') + e);
       }
     }
   };
@@ -1358,6 +1372,64 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
                     />
                   ))}
                 </div>
+
+                {/* RF Auto-Markers Panel */}
+                {(rfMarkersLoading || rfMarkers) && (
+                  <div className="w-full mt-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Tag className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-semibold text-foreground">RF Auto-Markers</span>
+                      {rfMarkersLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground ml-1" />}
+                      {rfMarkers?.summary && !rfMarkersLoading && (
+                        <span className="text-xs text-muted-foreground ml-auto">{rfMarkers.summary}</span>
+                      )}
+                    </div>
+
+                    {rfMarkersLoading ? (
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                        {[...Array(6)].map((_, i) => (
+                          <div key={i} className="h-14 rounded-lg bg-muted/40 animate-pulse" />
+                        ))}
+                      </div>
+                    ) : rfMarkers?.display && rfMarkers.display.length > 0 ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                        {rfMarkers.display.map((m: any) => {
+                          const passFail = rfMarkers.pass_fail?.[m.key];
+                          const hasMask = passFail !== undefined && passFail !== null;
+                          const passed = passFail === true;
+                          return (
+                            <div
+                              key={m.key}
+                              className={cn(
+                                "rounded-lg border px-3 py-2 flex flex-col gap-0.5",
+                                hasMask
+                                  ? passed
+                                    ? "border-emerald-500/40 bg-emerald-500/5"
+                                    : "border-red-500/40 bg-red-500/5"
+                                  : "border-border bg-muted/20"
+                              )}
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wide leading-tight truncate">{m.label}</span>
+                                {hasMask && (
+                                  passed
+                                    ? <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
+                                    : <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                )}
+                              </div>
+                              <span className="text-sm font-semibold text-foreground leading-tight">
+                                {m.value ?? '—'}
+                                {m.unit ? <span className="text-xs font-normal text-muted-foreground ml-1">{m.unit}</span> : null}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : !rfMarkersLoading ? (
+                      <p className="text-xs text-muted-foreground">No se detectaron marcadores.</p>
+                    ) : null}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-center space-y-6 py-20 animate-in fade-in duration-700">
@@ -1378,3 +1450,5 @@ export function SParamAnalysisTool({ initialFile, onFileProcessed }: SParamAnaly
     </ToolShell>
   );
 }
+
+
